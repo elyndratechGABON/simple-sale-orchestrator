@@ -1,0 +1,772 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Orchestrateur — Projets</title>
+    <style>
+      :root {
+        --bg: #f6f7f9;
+        --card: #ffffff;
+        --border: #e3e6ea;
+        --text: #1b2430;
+        --muted: #667085;
+        --primary: #0f7a4d;
+        --primary-text: #ffffff;
+        --danger: #b42318;
+        --danger-bg: #fee4e2;
+        --ok-bg: #dcfce7;
+        --ok-text: #14532d;
+        --trial-bg: #e0f2fe;
+        --trial-text: #0c4a6e;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      header {
+        background: var(--card);
+        border-bottom: 1px solid var(--border);
+        padding: 16px 24px;
+        position: relative;
+      }
+      header h1 { margin: 0; font-size: 18px; }
+      header p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+      main { max-width: 960px; margin: 0 auto; padding: 24px; }
+      .toolbar { display: flex; gap: 8px; margin-bottom: 16px; }
+      .toolbar input {
+        flex: 1;
+        padding: 8px 12px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font-size: 14px;
+      }
+      .toolbar button {
+        padding: 8px 16px;
+        border: 1px solid var(--border);
+        background: var(--card);
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 14px;
+      }
+      .toolbar button.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-text); }
+      .toolbar button:hover { border-color: var(--primary); color: var(--primary); }
+      .toolbar button.primary:hover { color: var(--primary-text); filter: brightness(0.97); }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 14px 16px;
+        margin-bottom: 12px;
+      }
+      .row-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+      .shop-name, .project-name { font-size: 15px; font-weight: 600; }
+      .shop-meta { color: var(--muted); font-size: 13px; margin-top: 2px; }
+      .badge {
+        display: inline-block;
+        padding: 3px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      .badge.ok { background: var(--ok-bg); color: var(--ok-text); }
+      .badge.trial { background: var(--trial-bg); color: var(--trial-text); }
+      .badge.danger { background: var(--danger-bg); color: var(--danger); }
+      .dates { display: flex; gap: 16px; margin-top: 10px; color: var(--muted); font-size: 13px; flex-wrap: wrap; }
+      .dates b { color: var(--text); font-variant-numeric: tabular-nums; }
+      .actions { display: flex; gap: 8px; margin-top: 12px; }
+      .actions button {
+        padding: 6px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--card);
+        cursor: pointer;
+        font-size: 13px;
+      }
+      .actions button.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-text); }
+      .actions button:hover { filter: brightness(0.97); }
+      details { margin-top: 10px; }
+      summary { cursor: pointer; color: var(--muted); font-size: 13px; user-select: none; }
+      table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+      th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+      th { color: var(--muted); font-weight: 500; }
+      td b { font-variant-numeric: tabular-nums; }
+      .empty { text-align: center; color: var(--muted); padding: 40px 0; }
+      .status-line { margin-top: 12px; font-size: 13px; }
+      .status-line.error { color: var(--danger); }
+      .status-line.ok { color: var(--ok-text); }
+      .project-section { margin-top: 24px; }
+      .project-section h2 { font-size: 15px; margin: 0 0 4px; }
+      .project-config { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+      .project-config b { color: var(--text); }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 10px;
+        margin-bottom: 16px;
+      }
+      .stat {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 10px 14px;
+      }
+      .stat .k { color: var(--muted); font-size: 12px; }
+      .stat .v { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+      .stat .v.ok { color: var(--ok-text); }
+      .stat .v.danger { color: var(--danger); }
+      #live {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 6px 12px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        font-size: 12px;
+        color: var(--muted);
+        white-space: nowrap;
+        background: var(--card);
+      }
+      #live .dot { width: 8px; height: 8px; border-radius: 50%; background: #d0d5dd; }
+      #live.on .dot { background: #12b76a; box-shadow: 0 0 0 3px rgb(18 183 106 / 0.18); }
+      #live.off .dot { background: var(--danger); }
+      header .notify {
+        position: absolute;
+        top: 16px;
+        right: 100px;
+        border: 1px solid var(--border);
+        background: none;
+        border-radius: 8px;
+        padding: 5px 10px;
+        cursor: pointer;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      header .notify:hover { color: var(--primary); border-color: var(--primary); }
+      #toasts {
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        z-index: 20;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-width: min(360px, 90vw);
+      }
+      .toast {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-left: 4px solid var(--primary);
+        border-radius: 10px;
+        padding: 10px 14px;
+        box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+        font-size: 13px;
+      }
+      .toast b { display: block; margin-bottom: 2px; }
+      .toast span { color: var(--muted); }
+      dialog {
+        border: none;
+        border-radius: 12px;
+        padding: 20px;
+        width: min(420px, 90vw);
+      }
+      dialog::backdrop { background: rgb(0 0 0 / 0.4); }
+      dialog h2 { margin: 0 0 12px; font-size: 16px; }
+      dialog label { display: block; color: var(--muted); font-size: 13px; margin-bottom: 4px; }
+      dialog input {
+        width: 100%;
+        padding: 8px 12px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font-size: 14px;
+        margin-bottom: 10px;
+      }
+      .preview { margin: 12px 0; color: var(--muted); font-size: 13px; }
+      .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+      .dialog-actions button { padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); cursor: pointer; }
+      .dialog-actions button.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-text); }
+      footer { max-width: 960px; margin: 24px auto; padding: 0 24px 40px; color: var(--muted); font-size: 12px; }
+      #login-screen {
+        position: fixed;
+        inset: 0;
+        background: var(--bg);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10;
+      }
+      #login-screen[hidden] { display: none; }
+      .login-box {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 28px;
+        width: min(360px, 90vw);
+      }
+      .login-box h2 { margin: 0 0 4px; font-size: 17px; }
+      .login-box p { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+      .login-box label { display: block; color: var(--muted); font-size: 13px; margin-bottom: 4px; }
+      .login-box input {
+        width: 100%;
+        padding: 8px 12px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font-size: 14px;
+      }
+      .login-box button {
+        width: 100%;
+        margin-top: 12px;
+        padding: 9px 14px;
+        border: none;
+        border-radius: 8px;
+        background: var(--primary);
+        color: var(--primary-text);
+        font-size: 14px;
+        cursor: pointer;
+      }
+      .login-error { margin-top: 10px; color: var(--danger); font-size: 13px; min-height: 18px; }
+      header .logout { position: absolute; top: 16px; right: 24px; border: 1px solid var(--border); background: none; border-radius: 8px; padding: 5px 10px; cursor: pointer; color: var(--muted); font-size: 12px; }
+      header .logout:hover { color: var(--danger); border-color: var(--danger); }
+    </style>
+  </head>
+  <body>
+    <div id="login-screen">
+      <div class="login-box">
+        <h2>Accès protégé</h2>
+        <p>L'orchestrateur montre les téléphones et les licences de vos projets — mot de passe requis.</p>
+        <label for="login-password">Mot de passe</label>
+        <input id="login-password" type="password" autocomplete="current-password" />
+        <button id="login-submit" type="button">Se connecter</button>
+        <div class="login-error" id="login-error"></div>
+      </div>
+    </div>
+
+    <header>
+      <h1>Orchestrateur</h1>
+      <p>Projets et boutiques en production — les données arrivent dès que les apps sont en ligne.</p>
+      <button id="notify" type="button" hidden>🔔 Activer les alertes</button>
+      <button id="logout" type="button" hidden>Se déconnecter</button>
+    </header>
+
+    <main>
+      <div class="toolbar">
+        <input id="filter" type="search" placeholder="Filtrer : projet, boutique, propriétaire, téléphone…" autocomplete="off" />
+        <button id="new-project" type="button" class="primary">Nouveau projet</button>
+        <button id="refresh" type="button">Actualiser</button>
+        <div id="live" title="Connexion temps réel"><span class="dot"></span><span id="live-label">connexion…</span></div>
+      </div>
+      <div id="stats" class="stats"></div>
+      <div id="status" class="status-line"></div>
+      <div id="list"></div>
+    </main>
+
+    <footer id="config"></footer>
+
+    <dialog id="project-dialog">
+      <h2>Nouveau projet</h2>
+      <form method="dialog" id="project-form">
+        <label for="project-name">Nom du projet</label>
+        <input id="project-name" type="text" placeholder="Ex : Caisse POS" autofocus />
+        <label for="project-domain">Domaine de l'app (l'origin exacte)</label>
+        <input id="project-domain" type="text" placeholder="Ex : https://elyndracaisse.vercel.app" />
+        <label for="project-price">Prix du mois (FCFA)</label>
+        <input id="project-price" type="number" min="1" value="10000" />
+        <label for="project-trial">Essai offert (jours)</label>
+        <input id="project-trial" type="number" min="0" value="30" />
+        <div class="dialog-actions">
+          <button value="cancel">Annuler</button>
+          <button value="confirm" class="primary" id="project-confirm">Créer le projet</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="extend-dialog">
+      <h2>Prolonger — <span id="extend-shop"></span></h2>
+      <form method="dialog" id="extend-form">
+        <label for="extend-amount">Montant reçu (FCFA)</label>
+        <input id="extend-amount" type="number" min="1" inputmode="numeric" autofocus />
+        <p class="preview" id="extend-preview"></p>
+        <div class="dialog-actions">
+          <button value="cancel">Annuler</button>
+          <button value="confirm" class="primary" id="extend-confirm">Prolonger</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toasts"></div>
+
+    <script>
+      "use strict";
+      const DAY_MS = 86400000;
+      const TOKEN_KEY = "orch_token";
+      const $ = (sel) => document.querySelector(sel);
+      let projects = [];
+      let activeShop = null;
+      let streamAbort = null;
+      let streamRetry = 0;
+      let prevIds = new Set();
+      const state = { filter: "" };
+
+      const fmtFCFA = (v) => Number(v).toLocaleString("fr-FR") + "\u00A0F";
+      const fmtDate = (ts) => new Date(ts).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" });
+
+      function token() {
+        return localStorage.getItem(TOKEN_KEY) || "";
+      }
+      async function api(path, options = {}) {
+        const res = await fetch(path, {
+          ...options,
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer " + token(),
+            ...(options.headers || {}),
+          },
+        });
+        if (res.status === 401) {
+          showLogin();
+          throw new Error("auth");
+        }
+        return res.json();
+      }
+
+      let lastJson = "";
+
+      async function fetchData() {
+        const data = await api("/api/projects");
+        projects = data.projects;
+        $("#config").textContent =
+          "Chaque app déployée est un projet identifié par son domaine — créez un projet, puis le code de l'app s'annonce automatiquement.";
+        const json = JSON.stringify(projects);
+        renderStats(projects);
+        if (json !== lastJson) {
+          lastJson = json;
+          render();
+        }
+        detectNewShops(projects);
+        lastUpdate();
+      }
+
+      async function load() {
+        setStatus("Chargement…");
+        try {
+          await fetchData();
+          setStatus("");
+        } catch (e) {
+          if (e.message !== "auth") setStatus("Impossible de joindre le serveur.", "error");
+        }
+      }
+
+      // Filet de sécurité : le flux temps réel fait vivre les données ; ce polling lent
+      // rattrape un signal perdu (les messages pub/sub sont fire-and-forget).
+      setInterval(() => {
+        if (!token()) return;
+        fetchData().catch(() => {});
+      }, 2 * 60_000);
+
+      // ── Indicateurs centralisés ────────────────────────────────────────────────
+      function renderStats(rows) {
+        const shops = rows.flatMap((p) => p.shops);
+        const now = Date.now();
+        const notExpired = (s) => s.expiry_date > now;
+        const trial = shops.filter((s) => notExpired(s) && (s.payments ?? 0) === 0).length;
+        const active = shops.filter((s) => notExpired(s) && (s.payments ?? 0) > 0).length;
+        const expiring = shops.filter((s) => notExpired(s) && s.expiry_date - now <= 7 * DAY_MS).length;
+        const expired = shops.filter((s) => s.expiry_date <= now).length;
+        const revenue = shops.reduce((sum, s) => sum + (s.payments_total_fcfa ?? 0), 0);
+        $("#stats").innerHTML =
+          `<div class="stat"><div class="k">Boutiques</div><div class="v">${shops.length}</div></div>` +
+          `<div class="stat"><div class="k">En essai</div><div class="v">${trial}</div></div>` +
+          `<div class="stat"><div class="k">Actives</div><div class="v ok">${active}</div></div>` +
+          `<div class="stat"><div class="k">Expirent ≤ 7 j</div><div class="v">${expiring}</div></div>` +
+          `<div class="stat"><div class="k">Expirées</div><div class="v ${expired ? "danger" : ""}">${expired}</div></div>` +
+          `<div class="stat"><div class="k">CA prolongations</div><div class="v">${fmtFCFA(revenue)}</div></div>`;
+      }
+
+      // ── Nouvelle boutique : toast + notification système ───────────────────────
+      function detectNewShops(rows) {
+        const shops = rows.flatMap((p) => p.shops);
+        const ids = new Set(shops.map((s) => s.device_id));
+        if (prevIds.size > 0) {
+          for (const s of shops) {
+            if (!prevIds.has(s.device_id)) {
+              const sub = s.owner_name || s.location || `Appareil ${s.device_id.slice(0, 8)}`;
+              toast("Nouvelle boutique", `${s.store_name} — ${sub}`);
+              notify("Nouvelle boutique inscrite", `${s.store_name} (${sub})`);
+            }
+          }
+        }
+        prevIds = ids;
+      }
+
+      function toast(title, sub) {
+        const el = document.createElement("div");
+        el.className = "toast";
+        el.innerHTML = `<b>${esc(title)}</b>${sub ? `<span>${esc(sub)}</span>` : ""}`;
+        $("#toasts").appendChild(el);
+        setTimeout(() => el.remove(), 8000);
+      }
+
+      function canNotify() {
+        return "Notification" in window;
+      }
+      function notify(title, body) {
+        if (canNotify() && Notification.permission === "granted") {
+          try {
+            new Notification(title, { body: body || "", icon: "/apple-touch-icon.png" });
+          } catch {
+            /* certains navigateurs mobiles interdisent la notification sans interaction */
+          }
+        }
+      }
+      function updateNotifyBtn() {
+        const b = $("#notify");
+        b.hidden = !canNotify() || Notification.permission === "granted";
+      }
+      function enableNotifications() {
+        if (!canNotify()) return;
+        Notification.requestPermission().then(updateNotifyBtn);
+      }
+
+      // ── Flux temps réel (SSE) ──────────────────────────────────────────────────
+      // La console maintient un flux ouvert ; chaque signal déclenche un rechargement
+      // des données. Les fonctions Vercel meurent après quelques minutes : on rouvre.
+      async function connectStream() {
+        streamAbort?.abort();
+        const controller = new AbortController();
+        streamAbort = controller;
+        const live = $("#live");
+        const label = $("#live-label");
+        try {
+          const res = await fetch("/api/stream", {
+            headers: { Authorization: "Bearer " + token() },
+            signal: controller.signal,
+          });
+          if (!res.ok || !res.body) throw new Error("flux refusé");
+          streamRetry = 0;
+          live.className = "on";
+          label.textContent = "En direct";
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buf = "";
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done || controller.signal.aborted) break;
+            buf += decoder.decode(value, { stream: true });
+            let sep;
+            while ((sep = buf.indexOf("\n\n")) !== -1) {
+              const block = buf.slice(0, sep);
+              buf = buf.slice(sep + 2);
+              for (const line of block.split("\n")) {
+                if (line.startsWith("data:")) {
+                  try {
+                    onStreamEvent(JSON.parse(line.slice(5).trim()));
+                  } catch {
+                    /* ligne illisible, ignorée */
+                  }
+                }
+              }
+            }
+          }
+        } catch {
+          /* fermeture normale ou erreur : reconnexion ci-dessous */
+        }
+        if (controller.signal.aborted) return;
+        live.className = "off";
+        label.textContent = "déconnecté — reconnexion…";
+        streamRetry = Math.min(streamRetry + 1, 5);
+        setTimeout(connectStream, 2000 * streamRetry);
+      }
+
+      function onStreamEvent(data) {
+        if (!data || data.event === "connected") return;
+        fetchData().catch(() => {});
+      }
+
+      function lastUpdate() {
+        const el = document.querySelector("#live-label");
+        if (el && $("#live").className.includes("on")) {
+          el.textContent = "En direct · " + new Date().toLocaleTimeString("fr-FR");
+        }
+      }
+
+      function showLogin() {
+        $("#login-screen").hidden = false;
+        $("#logout").hidden = true;
+      }
+      function showDashboard() {
+        $("#login-screen").hidden = true;
+        $("#logout").hidden = false;
+      }
+
+      $("#login-submit").addEventListener("click", async () => {
+        const el = $("#login-password");
+        const err = $("#login-error");
+        err.textContent = "";
+        try {
+          const res = await fetch("/api/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ password: el.value }),
+          });
+          const data = await res.json();
+          if (!res.ok || !data.token) {
+            err.textContent = "Mot de passe incorrect.";
+            return;
+          }
+          localStorage.setItem(TOKEN_KEY, data.token);
+          el.value = "";
+          showDashboard();
+          await load();
+          updateNotifyBtn();
+          connectStream();
+        } catch {
+          err.textContent = "Serveur injoignable.";
+        }
+      });
+      $("#login-password").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") $("#login-submit").click();
+      });
+      $("#logout").addEventListener("click", () => {
+        localStorage.removeItem(TOKEN_KEY);
+        streamAbort?.abort();
+        streamAbort = null;
+        $("#live").className = "off";
+        $("#live-label").textContent = "déconnecté";
+        showLogin();
+      });
+      $("#notify").addEventListener("click", enableNotifications);
+
+      function setStatus(text, cls = "") {
+        const el = $("#status");
+        el.textContent = text;
+        el.className = "status-line " + cls;
+      }
+
+      function statusOf(shop) {
+        const days = Math.ceil((shop.expiry_date - Date.now()) / DAY_MS);
+        if (days <= 0) return { label: `Expiré depuis ${-days} j`, cls: "danger" };
+        if (shop.payments > 0) return { label: `Actif · ${days} j`, cls: "ok" };
+        return { label: `Essai · ${days} j`, cls: "trial" };
+      }
+
+      function matches(shop, q) {
+        q = q.toLowerCase();
+        return [shop.store_name, shop.owner_name, shop.phone, shop.location]
+          .filter(Boolean)
+          .some((v) => String(v).toLowerCase().includes(q));
+      }
+
+      function shopCard(shop) {
+        const st = statusOf(shop);
+        const isNew = Date.now() - shop.created_at < DAY_MS;
+        const card = document.createElement("div");
+        card.className = "card";
+        card.innerHTML = `
+          <div class="row-top">
+            <div>
+              <div class="shop-name">${esc(shop.store_name)}</div>
+              <div class="shop-meta">${esc(shop.owner_name)}${shop.phone ? " · " + esc(shop.phone) : ""}${shop.location ? " · " + esc(shop.location) : ""}</div>
+            </div>
+            <span>
+              ${isNew ? '<span class="badge trial">Nouveau</span> ' : ""}
+              <span class="badge ${st.cls}">${st.label}</span>
+            </span>
+          </div>
+          <div class="dates">
+            <span>Inscrit le <b>${fmtDate(shop.registration_date)}</b></span>
+            <span>Expire le <b>${fmtDate(shop.expiry_date)}</b></span>
+          </div>
+          <div class="actions">
+            <button class="primary" data-extend="${esc(shop.device_id)}">Prolonger</button>
+            <details>
+              <summary>Paiements (${shop.payments})</summary>
+              <div data-payments="${esc(shop.device_id)}">Chargement…</div>
+            </details>
+          </div>`;
+        card.querySelector("[data-extend]").addEventListener("click", () =>
+          openExtend(shop),
+        );
+        card.querySelector("details").addEventListener("toggle", () => {
+          const holder = card.querySelector("[data-payments]");
+          if (card.querySelector("details").open && holder.dataset.loaded !== "1") loadPayments(holder);
+        });
+        return card;
+      }
+
+      function render() {
+        const list = $("#list");
+        const q = state.filter.toLowerCase();
+        const shown = projects
+          .map((p) => ({
+            project: p,
+            shops: q
+              ? p.shops.filter(
+                  (s) =>
+                    p.name.toLowerCase().includes(q) ||
+                    p.domain.toLowerCase().includes(q) ||
+                    matches(s, q),
+                )
+              : p.shops,
+          }))
+          .filter((p) => q ? p.shops.length > 0 || p.project.name.toLowerCase().includes(q) || p.project.domain.toLowerCase().includes(q) : true);
+
+        if (shown.length === 0) {
+          list.innerHTML =
+            '<div class="empty">' +
+            (q
+              ? "Aucun résultat pour ce filtre."
+              : "Aucun projet pour l'instant — créez le premier depuis « Nouveau projet ».") +
+            "</div>";
+          return;
+        }
+
+        list.innerHTML = "";
+        for (const { project, shops } of shown) {
+          const isNewProject = Date.now() - project.created_at < DAY_MS;
+          const section = document.createElement("div");
+          section.className = "project-section";
+          section.innerHTML = `
+            <h2>${esc(project.name)} ${isNewProject ? '<span class="badge trial">Nouveau</span>' : ""}</h2>
+            <div class="project-config">
+              Domaine : <b>${esc(project.domain)}</b> ·
+              ${fmtFCFA(project.price_per_month_fcfa)}/mois ·
+              essai ${project.trial_days} j ·
+              ${project.shops.length} boutique${project.shops.length > 1 ? "s" : ""}
+            </div>`;
+          const holder = document.createElement("div");
+          if (shops.length === 0) {
+            holder.innerHTML = '<div class="empty">Aucune boutique n\'a encore synchronisé.</div>';
+          } else {
+            for (const shop of shops) holder.appendChild(shopCard(shop));
+          }
+          section.appendChild(holder);
+          list.appendChild(section);
+        }
+      }
+
+      function esc(s) {
+        return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+      }
+
+      async function loadPayments(holder) {
+        try {
+          const data = await api(`/api/shops/${encodeURIComponent(holder.dataset.payments)}/payments`);
+          holder.dataset.loaded = "1";
+          const payments = data.payments;
+          if (payments.length === 0) {
+            holder.textContent = "Aucun paiement enregistré.";
+            return;
+          }
+          let html = "<table><thead><tr><th>Date</th><th>Montant</th><th>Jours ajoutés</th></tr></thead><tbody>";
+          for (const p of payments) {
+            html += `<tr><td>${fmtDate(p.created_at)}</td><td><b>${fmtFCFA(p.amount)}</b></td><td>${p.days_added} j</td></tr>`;
+          }
+          html += "</tbody></table>";
+          holder.innerHTML = html;
+        } catch {
+          holder.textContent = "Erreur de chargement.";
+        }
+      }
+
+      function projectOf(shop) {
+        return projects.find((p) => p.shops.some((s) => s.device_id === shop.device_id));
+      }
+
+      function openExtend(shop) {
+        activeShop = shop;
+        $("#extend-shop").textContent = shop.store_name;
+        $("#extend-amount").value = "";
+        updatePreview();
+        $("#extend-dialog").showModal();
+      }
+
+      function updatePreview() {
+        const amount = Math.round(Number($("#extend-amount").value));
+        const project = projectOf(activeShop);
+        const preview = $("#extend-preview");
+        if (!activeShop || !project || !Number.isFinite(amount) || amount <= 0) {
+          preview.textContent = activeShop && project ? `1 mois = ${fmtFCFA(project.price_per_month_fcfa)}.` : "";
+          return;
+        }
+        const days = Math.max(1, Math.round((amount / project.price_per_month_fcfa) * 30));
+        const base = Math.max(Date.now(), activeShop.expiry_date);
+        const next = new Date(base + days * DAY_MS);
+        preview.textContent =
+          `${fmtFCFA(amount)} → +${days} j, nouvelle échéance le ${fmtDate(next.getTime())}.`;
+      }
+
+      $("#extend-amount").addEventListener("input", updatePreview);
+
+      $("#extend-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const amount = Math.round(Number($("#extend-amount").value));
+        if (!Number.isFinite(amount) || amount <= 0) return;
+        const confirmBtn = $("#extend-confirm");
+        confirmBtn.disabled = true;
+        try {
+          await api(`/api/shops/${encodeURIComponent(activeShop.device_id)}/extend`, {
+            method: "POST",
+            body: JSON.stringify({ amount_fcfa: amount }),
+          });
+          $("#extend-dialog").close();
+          await load();
+          setStatus("Prolongation enregistrée. L'app recevra la nouvelle échéance à sa prochaine synchronisation.", "ok");
+        } catch (err) {
+          if (err.message !== "auth") setStatus("Erreur : le serveur ne répond pas.", "error");
+        } finally {
+          confirmBtn.disabled = false;
+        }
+      });
+
+      $("#new-project").addEventListener("click", () => {
+        $("#project-dialog").showModal();
+      });
+
+      $("#project-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const name = $("#project-name").value.trim();
+        const domain = $("#project-domain").value.trim();
+        const price = Math.round(Number($("#project-price").value));
+        const trial = Math.round(Number($("#project-trial").value));
+        if (!name || !domain) {
+          setStatus("Le nom et le domaine du projet sont requis.", "error");
+          return;
+        }
+        const confirmBtn = $("#project-confirm");
+        confirmBtn.disabled = true;
+        try {
+          await api("/api/projects", {
+            method: "POST",
+            body: JSON.stringify({ name, domain, price_per_month_fcfa: price, trial_days: trial }),
+          });
+          $("#project-dialog").close();
+          $("#project-name").value = "";
+          $("#project-domain").value = "";
+          await load();
+          setStatus(`Projet « ${name} » créé — déployez l'app avec le snippet, les boutiques arriveront d'elles-mêmes.`, "ok");
+        } catch (err) {
+          if (err.message !== "auth") setStatus("Erreur : impossible de créer le projet.", "error");
+        } finally {
+          confirmBtn.disabled = false;
+        }
+      });
+
+      $("#refresh").addEventListener("click", load);
+      $("#filter").addEventListener("input", (e) => {
+        state.filter = e.target.value.trim();
+        render();
+      });
+
+      load().then(() => {
+        updateNotifyBtn();
+        if (token()) connectStream();
+      });
+    </script>
+  </body>
+</html>

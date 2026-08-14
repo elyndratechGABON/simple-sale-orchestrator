@@ -1,0 +1,10 @@
+{
+  "name": "simple-sale-orchestrator",
+  "private": true,
+  "scripts": {
+    "dev": "cd backend && npm run dev",
+    "start": "cd backend && npm run start",
+    "dev:dashboard": "cd dashboard && npm run dev",
+    "build:dashboard": "cd dashboard && npm run build"
+  }
+}

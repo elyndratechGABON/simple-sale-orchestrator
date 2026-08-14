@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Orchestrateur — Boutiques</title>
+    <style>
+      :root {
+        --bg: #f6f7f9;
+        --card: #ffffff;
+        --border: #e3e6ea;
+        --text: #1b2430;
+        --muted: #667085;
+        --primary: #0f7a4d;
+        --primary-text: #ffffff;
+        --danger: #b42318;
+        --danger-bg: #fee4e2;
+        --ok-bg: #dcfce7;
+        --ok-text: #14532d;
+        --trial-bg: #e0f2fe;
+        --trial-text: #0c4a6e;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      header {
+        background: var(--card);
+        border-bottom: 1px solid var(--border);
+        padding: 16px 24px;
+      }
+      header h1 { margin: 0; font-size: 18px; }
+      header p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+      main { max-width: 960px; margin: 0 auto; padding: 24px; }
+      .toolbar { display: flex; gap: 8px; margin-bottom: 16px; }
+      .toolbar input {
+        flex: 1;
+        padding: 8px 12px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font-size: 14px;
+      }
+      .toolbar button {
+        padding: 8px 16px;
+        border: 1px solid var(--border);
+        background: var(--card);
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 14px;
+      }
+      .toolbar button:hover { border-color: var(--primary); color: var(--primary); }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 14px 16px;
+        margin-bottom: 12px;
+      }
+      .row-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+      .shop-name { font-size: 15px; font-weight: 600; }
+      .shop-meta { color: var(--muted); font-size: 13px; margin-top: 2px; }
+      .badge {
+        display: inline-block;
+        padding: 3px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      .badge.ok { background: var(--ok-bg); color: var(--ok-text); }
+      .badge.trial { background: var(--trial-bg); color: var(--trial-text); }
+      .badge.danger { background: var(--danger-bg); color: var(--danger); }
+      .dates { display: flex; gap: 16px; margin-top: 10px; color: var(--muted); font-size: 13px; flex-wrap: wrap; }
+      .dates b { color: var(--text); font-variant-numeric: tabular-nums; }
+      .actions { display: flex; gap: 8px; margin-top: 12px; }
+      .actions button {
+        padding: 6px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--card);
+        cursor: pointer;
+        font-size: 13px;
+      }
+      .actions button.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-text); }
+      .actions button:hover { filter: brightness(0.97); }
+      details { margin-top: 10px; }
+      summary { cursor: pointer; color: var(--muted); font-size: 13px; user-select: none; }
+      table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+      th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+      th { color: var(--muted); font-weight: 500; }
+      td b { font-variant-numeric: tabular-nums; }
+      .empty { text-align: center; color: var(--muted); padding: 40px 0; }
+      .status-line { margin-top: 12px; font-size: 13px; }
+      .status-line.error { color: var(--danger); }
+      .status-line.ok { color: var(--ok-text); }
+      dialog {
+        border: none;
+        border-radius: 12px;
+        padding: 20px;
+        width: min(420px, 90vw);
+      }
+      dialog::backdrop { background: rgb(0 0 0 / 0.4); }
+      dialog h2 { margin: 0 0 12px; font-size: 16px; }
+      dialog label { display: block; color: var(--muted); font-size: 13px; margin-bottom: 4px; }
+      dialog input {
+        width: 100%;
+        padding: 8px 12px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font-size: 14px;
+      }
+      .preview { margin: 12px 0; color: var(--muted); font-size: 13px; }
+      .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+      .dialog-actions button { padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); cursor: pointer; }
+      .dialog-actions button.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-text); }
+      footer { max-width: 960px; margin: 24px auto; padding: 0 24px 40px; color: var(--muted); font-size: 12px; }
+      #login-screen {
+        position: fixed;
+        inset: 0;
+        background: var(--bg);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10;
+      }
+      #login-screen[hidden] { display: none; }
+      .login-box {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 28px;
+        width: min(360px, 90vw);
+      }
+      .login-box h2 { margin: 0 0 4px; font-size: 17px; }
+      .login-box p { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+      .login-box label { display: block; color: var(--muted); font-size: 13px; margin-bottom: 4px; }
+      .login-box input {
+        width: 100%;
+        padding: 8px 12px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font-size: 14px;
+      }
+      .login-box button {
+        width: 100%;
+        margin-top: 12px;
+        padding: 9px 14px;
+        border: none;
+        border-radius: 8px;
+        background: var(--primary);
+        color: var(--primary-text);
+        font-size: 14px;
+        cursor: pointer;
+      }
+      .login-error { margin-top: 10px; color: var(--danger); font-size: 13px; min-height: 18px; }
+      header .logout { float: right; border: 1px solid var(--border); background: none; border-radius: 8px; padding: 5px 10px; cursor: pointer; color: var(--muted); font-size: 12px; }
+      header .logout:hover { color: var(--danger); border-color: var(--danger); }
+    </style>
+  </head>
+  <body>
+    <div id="login-screen">
+      <div class="login-box">
+        <h2>Accès protégé</h2>
+        <p>Ce dashboard montre les téléphones des boutiques — mot de passe requis.</p>
+        <label for="login-password">Mot de passe</label>
+        <input id="login-password" type="password" autocomplete="current-password" />
+        <button id="login-submit" type="button">Se connecter</button>
+        <div class="login-error" id="login-error"></div>
+      </div>
+    </div>
+
+    <header>
+      <h1>Orchestrateur</h1>
+      <p>Boutiques qui utilisent la caisse POS — les données arrivent dès qu'elles sont en ligne.</p>
+      <button id="logout" type="button" hidden>Se déconnecter</button>
+    </header>
+
+    <main>
+      <div class="toolbar">
+        <input id="filter" type="search" placeholder="Filtrer : boutique, propriétaire, téléphone…" autocomplete="off" />
+        <button id="refresh" type="button">Actualiser</button>
+      </div>
+      <div id="status" class="status-line"></div>
+      <div id="list"></div>
+    </main>
+
+    <footer id="config"></footer>
+
+    <dialog id="extend-dialog">
+      <h2>Prolonger — <span id="extend-shop"></span></h2>
+      <form method="dialog" id="extend-form">
+        <label for="extend-amount">Montant reçu (FCFA)</label>
+        <input id="extend-amount" type="number" min="1" inputmode="numeric" autofocus />
+        <p class="preview" id="extend-preview"></p>
+        <div class="dialog-actions">
+          <button value="cancel">Annuler</button>
+          <button value="confirm" class="primary" id="extend-confirm">Prolonger</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script>
+      "use strict";
+      const DAY_MS = 86400000;
+      const $ = (sel) => document.querySelector(sel);
+      let config = { price_per_month_fcfa: 10000, trial_days: 30 };
+      let shops = [];
+      let activeShopId = null;
+      const state = { filter: "", dialog: null };
+
+      const fmtFCFA = (v) => Number(v).toLocaleString("fr-FR") + "\u00A0F";
+      const fmtDate = (ts) => new Date(ts).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" });
+
+      let lastJson = "";
+
+      async function fetchData() {
+        const [cfgRes, shopsRes] = await Promise.all([fetch("/api/config"), fetch("/api/shops")]);
+        if (shopsRes.status === 401) {
+          showLogin();
+          throw new Error("auth");
+        }
+        config = await cfgRes.json();
+        shops = (await shopsRes.json()).shops;
+        $("#config").textContent =
+          `Un mois = ${fmtFCFA(config.price_per_month_fcfa)} · essai de ${config.trial_days} jours à l'inscription — ` +
+          "les boutiques synchronisent dès que ce PC est allumé et joignable.";
+        // Ne reconstruit la liste que si les données ont changé : le déploiement d'une
+        // fiche (historique ouvert) survit à l'actualisation automatique.
+        const json = JSON.stringify(shops);
+        if (json !== lastJson) {
+          lastJson = json;
+          render();
+        }
+      }
+
+      async function load() {
+        setStatus("Chargement…");
+        try {
+          await fetchData();
+          setStatus("");
+        } catch (e) {
+          setStatus("Impossible de joindre le serveur.", "error");
+        }
+      }
+
+      // Actualisation automatique : les nouvelles boutiques apparaissent toutes seules,
+      // dès qu'elles parviennent au serveur, sans cliquer sur « Actualiser ».
+      setInterval(async () => {
+        try {
+          await fetchData();
+        } catch {
+          /* serveur coupé : on réessaiera */
+        }
+      }, 5000);
+
+      function showLogin() {
+        $("#login-screen").hidden = false;
+        $("#logout").hidden = true;
+      }
+
+      function showDashboard() {
+        $("#login-screen").hidden = true;
+        $("#logout").hidden = false;
+      }
+
+      $("#login-submit").addEventListener("click", async () => {
+        const el = $("#login-password");
+        const err = $("#login-error");
+        err.textContent = "";
+        try {
+          const res = await fetch("/api/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ password: el.value }),
+          });
+          if (!res.ok) {
+            err.textContent = "Mot de passe incorrect.";
+            return;
+          }
+          el.value = "";
+          showDashboard();
+          await load();
+        } catch {
+          err.textContent = "Serveur injoignable.";
+        }
+      });
+      $("#login-password").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") $("#login-submit").click();
+      });
+      $("#logout").addEventListener("click", async () => {
+        try {
+          await fetch("/api/logout", { method: "POST" });
+        } catch {
+          /* la déconnexion locale suffit */
+        }
+        showLogin();
+      });
+
+      function setStatus(text, cls = "") {
+        const el = $("#status");
+        el.textContent = text;
+        el.className = "status-line " + cls;
+      }
+
+      function statusOf(shop) {
+        const days = Math.ceil((shop.expiry_date - Date.now()) / DAY_MS);
+        if (days <= 0) return { label: `Expiré depuis ${-days} j`, cls: "danger" };
+        if (shop.payments > 0) return { label: `Actif · ${days} j`, cls: "ok" };
+        return { label: `Essai · ${days} j`, cls: "trial" };
+      }
+
+      function matches(shop, q) {
+        q = q.toLowerCase();
+        return [shop.store_name, shop.owner_name, shop.phone, shop.location]
+          .filter(Boolean)
+          .some((v) => String(v).toLowerCase().includes(q));
+      }
+
+      function render() {
+        const list = $("#list");
+        const q = state.filter;
+        const visible = q ? shops.filter((s) => matches(s, q)) : shops;
+
+        if (visible.length === 0) {
+          list.innerHTML = '<div class="empty">Aucune boutique' + (q ? " ne correspond au filtre" : " pour l'instant") + ".</div>";
+          return;
+        }
+
+        list.innerHTML = "";
+        for (const shop of visible) {
+          const st = statusOf(shop);
+          const isNew = Date.now() - shop.created_at < DAY_MS;
+          const card = document.createElement("div");
+          card.className = "card";
+          card.innerHTML = `
+            <div class="row-top">
+              <div>
+                <div class="shop-name">${esc(shop.store_name)}</div>
+                <div class="shop-meta">${esc(shop.owner_name)}${shop.phone ? " · " + esc(shop.phone) : ""}${shop.location ? " · " + esc(shop.location) : ""}</div>
+              </div>
+              <span>
+                ${isNew ? '<span class="badge trial">Nouveau</span> ' : ""}
+                <span class="badge ${st.cls}">${st.label}</span>
+              </span>
+            </div>
+            <div class="dates">
+              <span>Inscrit le <b>${fmtDate(shop.registration_date)}</b></span>
+              <span>Expire le <b>${fmtDate(shop.expiry_date)}</b></span>
+            </div>
+            <div class="actions">
+              <button class="primary" data-extend="${shop.id}">Prolonger</button>
+              <details>
+                <summary>Paiements (${shop.payments})</summary>
+                <div data-payments="${shop.id}">Chargement…</div>
+              </details>
+            </div>`;
+          list.appendChild(card);
+        }
+
+        list.querySelectorAll("[data-extend]").forEach((b) =>
+          b.addEventListener("click", () => openExtend(Number(b.dataset.extend))),
+        );
+        list.querySelectorAll("details").forEach((d) =>
+          d.addEventListener("toggle", () => {
+            const holder = d.querySelector("[data-payments]");
+            if (d.open && holder.dataset.loaded !== "1") loadPayments(holder);
+          }),
+        );
+      }
+
+      function esc(s) {
+        return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+      }
+
+      async function loadPayments(holder) {
+        try {
+          const res = await fetch(`/api/shops/${holder.dataset.payments}/payments`);
+          const { payments } = await res.json();
+          holder.dataset.loaded = "1";
+          if (payments.length === 0) {
+            holder.textContent = "Aucun paiement enregistré.";
+            return;
+          }
+          let html = "<table><thead><tr><th>Date</th><th>Montant</th><th>Jours ajoutés</th></tr></thead><tbody>";
+          for (const p of payments) {
+            html += `<tr><td>${fmtDate(p.created_at)}</td><td><b>${fmtFCFA(p.amount)}</b></td><td>${p.days_added} j</td></tr>`;
+          }
+          html += "</tbody></table>";
+          holder.innerHTML = html;
+        } catch {
+          holder.textContent = "Erreur de chargement.";
+        }
+      }
+
+      function openExtend(shopId) {
+        const shop = shops.find((s) => s.id === shopId);
+        if (!shop) return;
+        activeShopId = shopId;
+        $("#extend-shop").textContent = shop.store_name;
+        $("#extend-amount").value = "";
+        updatePreview();
+        $("#extend-dialog").showModal();
+      }
+
+      function updatePreview() {
+        const amount = Math.round(Number($("#extend-amount").value));
+        const shop = shops.find((s) => s.id === activeShopId);
+        const preview = $("#extend-preview");
+        if (!shop || !Number.isFinite(amount) || amount <= 0) {
+          preview.textContent = `1 mois = ${fmtFCFA(config.price_per_month_fcfa)}.`;
+          return;
+        }
+        const days = Math.max(1, Math.round((amount / config.price_per_month_fcfa) * 30));
+        const base = Math.max(Date.now(), shop.expiry_date);
+        const next = new Date(base + days * DAY_MS);
+        preview.textContent =
+          `${fmtFCFA(amount)} → +${days} j, nouvelle échéance le ${fmtDate(next.getTime())}.`;
+      }
+
+      $("#extend-amount").addEventListener("input", updatePreview);
+
+      $("#extend-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const amount = Math.round(Number($("#extend-amount").value));
+        if (!Number.isFinite(amount) || amount <= 0) return;
+        const confirmBtn = $("#extend-confirm");
+        confirmBtn.disabled = true;
+        try {
+          const res = await fetch(`/api/shops/${activeShopId}/extend`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ amount_fcfa: amount }),
+          });
+          if (!res.ok) throw new Error();
+          await res.json();
+          $("#extend-dialog").close();
+          await load();
+          setStatus("Prolongation enregistrée. L'app recevra la nouvelle échéance à sa prochaine connexion.", "ok");
+        } catch {
+          setStatus("Erreur : le serveur ne répond pas.", "error");
+        } finally {
+          confirmBtn.disabled = false;
+        }
+      });
+
+      $("#refresh").addEventListener("click", load);
+      $("#filter").addEventListener("input", (e) => {
+        state.filter = e.target.value.trim();
+        render();
+      });
+
+      load();
+    </script>
+  </body>
+</html>
