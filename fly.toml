@@ -1,0 +1,31 @@
+# Orchestrateur des caisses POS — Fly.io.
+# Après `fly launch` (ou `fly deploy`), l'URL publique est https://<app>.fly.dev
+#   → dashboard à la racine, API sous /api/*.
+app = "simple-sale-orchestrator"
+
+primary_region = "cdg"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # La base SQLite vit sur le VOLUME persistant ([[mounts]]), jamais dans l'image.
+  ORCHESTRATOR_DB = "/data/orchestrator.db"
+  PORT = "8080"
+  PRICE_PER_MONTH_FCFA = "10000"
+  TRIAL_DAYS = "30"
+
+[[mounts]]
+  source = "data"
+  destination = "/data"
+
+[[http_service]]
+  internal_port = 8080
+  force_https = true
+  # Caisse en continu : pas de scale-to-zero, une machine toujours debout.
+  auto_stop_machines = false
+  min_machines_running = 1
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 100
+    soft_limit = 20

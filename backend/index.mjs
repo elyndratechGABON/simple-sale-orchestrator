@@ -558,6 +558,81 @@ app.get("/api/v1/admin/shops/:device_id/commands", requireAdmin, (req, res) => {
   });
 });
 
+// ── Protocole v2 : stats réelles par projet (agrégées depuis sync_payloads) ───────
+// Le dashboard affiche les données que les caisses déposent réellement. Chaque caisse
+// envoie une fenêtre glissante de 7 j déjà cumulée : on ne retient donc que le DERNIER
+// payload par caisse, puis on somme les totaux du projet. Top produits agrégés par nom.
+// Jamais le brut : uniquement des totaux et des top produits.
+function aggregateStats(shops) {
+  const zero = { revenue: 0, profit: 0, sales: 0, items: 0, customers: 0 };
+  if (shops.length === 0) return { generated_at: null, totals: zero, top_products: [], shops: [] };
+
+  const ids = shops.map((s) => s.device_id);
+  const rows = db
+    .prepare(
+      `SELECT sp.device_id, sp.payload, sp.received_at
+       FROM sync_payloads sp
+       JOIN (SELECT device_id, MAX(received_at) AS m FROM sync_payloads GROUP BY device_id) t
+         ON sp.device_id = t.device_id AND sp.received_at = t.m
+       WHERE sp.device_id IN (${ids.map(() => "?").join(",")})`,
+    )
+    .all(...ids);
+
+  const byDevice = new Map();
+  for (const row of rows) {
+    let p;
+    try {
+      p = JSON.parse(row.payload);
+    } catch {
+      continue;
+    }
+    const t = p.totals ?? {};
+    byDevice.set(row.device_id, {
+      last_sync_at: row.received_at,
+      totals: {
+        revenue: Number(t.revenue) || 0,
+        profit: Number(t.profit) || 0,
+        sales: Number(t.sales) || 0,
+        items: Number(t.items) || 0,
+        customers: Number(t.customers) || 0,
+      },
+      top_products: Array.isArray(p.top_products) ? p.top_products : [],
+    });
+  }
+
+  const totals = { ...zero };
+  const top = new Map();
+  let generated_at = null;
+  for (const st of byDevice.values()) {
+    for (const k of Object.keys(totals)) totals[k] += st.totals[k];
+    generated_at = Math.max(generated_at ?? 0, st.last_sync_at);
+    for (const prod of st.top_products) {
+      const name = String(prod.name ?? "—");
+      const cur = top.get(name) ?? { name, quantity: 0, revenue: 0 };
+      cur.quantity += Number(prod.quantity) || 0;
+      cur.revenue += Number(prod.revenue) || 0;
+      top.set(name, cur);
+    }
+  }
+
+  return {
+    generated_at,
+    totals,
+    top_products: [...top.values()].sort((a, b) => b.revenue - a.revenue).slice(0, 5),
+    shops: shops
+      .filter((s) => byDevice.has(s.device_id))
+      .map((s) => ({ device_id: s.device_id, store_name: s.store_name, ...byDevice.get(s.device_id) })),
+  };
+}
+
+app.get("/api/v1/admin/stats", requireAdmin, (req, res) => {
+  const session = sessionOf(req);
+  // Scope projet → ses caisses uniquement. Master → tout, ou `?project=` pour filtrer.
+  const origin =
+    session.scope === "project" ? session.project : str(req.query.project) || null;
+  res.json({ project: origin, ...aggregateStats(listShops(origin)) });
+});
+
 // ── Protocole v2 : gestion des projets (master uniquement) ────────────────────────
 app.get("/api/v1/admin/projects", requireMaster, (_req, res) => {
   const projects = db

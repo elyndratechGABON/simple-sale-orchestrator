@@ -1,5 +1,6 @@
-// Client API du dashboard — uniquement des appels admin, jamais de lecture des
-// `sync_payloads` : le dashboard route et gère, il n'interprète pas les données métier.
+// Client API du dashboard — uniquement des appels admin. Le dashboard ne lit jamais
+// le BRUT des `sync_payloads` : le backend les agrège (GET /api/v1/admin/stats) et ne
+// renvoie que des totaux + top produits par projet et par caisse.
 export class AuthError extends Error {}
 
 const TOKEN_KEY = "orch_admin_token";
@@ -73,6 +74,36 @@ export interface Project {
   shop_count: number;
 }
 
+export interface BusinessTotals {
+  revenue: number;
+  profit: number;
+  sales: number;
+  items: number;
+  customers: number;
+}
+
+export interface TopProduct {
+  name: string;
+  quantity: number;
+  revenue: number;
+}
+
+export interface ShopStats {
+  device_id: string;
+  store_name: string;
+  last_sync_at: number;
+  totals: BusinessTotals;
+  top_products: TopProduct[];
+}
+
+export interface Stats {
+  project: string | null;
+  generated_at: number | null;
+  totals: BusinessTotals;
+  top_products: TopProduct[];
+  shops: ShopStats[];
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -109,6 +140,11 @@ export function fetchConfig(): Promise<Config> {
 
 export function fetchShops(project?: string): Promise<{ shops: Shop[] }> {
   return request(`/api/v1/admin/shops${project ? `?project=${encodeURIComponent(project)}` : ""}`);
+}
+
+/** Stats réelles (agrégées des sync_payloads) : par projet (`?project=`) ou tout. */
+export function fetchStats(project?: string): Promise<Stats> {
+  return request(`/api/v1/admin/stats${project ? `?project=${encodeURIComponent(project)}` : ""}`);
 }
 
 export function fetchCommandHistory(deviceId: string): Promise<{ commands: AdminCommand[] }> {

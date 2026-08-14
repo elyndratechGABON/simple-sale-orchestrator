@@ -54,5 +54,17 @@ serveur à la réception. Ne pas écrire de logique « push » dans le backend.
   statique servi par le backend à `/`. Le backend n'a pas de build : on le lance
   avec `node index.mjs`.
 - **`/api/events` exige le token en query string**, jamais en en-tête.
-- **`sync_payloads` contient des données brutes de vente** : lisible seulement
-  par le backend, ne jamais l'exposer à la caisse ni au dashboard.
+- **`sync_payloads` contient des données brutes de vente** : le dashboard ne les
+  lit jamais directement. Le backend les agrège (`GET /api/v1/admin/stats` —
+  dernier payload par caisse, totaux + top 5 produits, scope projet) et n'expose
+  que ces totaux.
+- **Déploiement public = Fly.io** (`fly.toml` + `Dockerfile`). Le backend est
+  Node ≥ 22.5 (`node:sqlite`) + fichier SQLite : ni serverless ni Cloudflare
+  Worker. `ORCHESTRATOR_DB=/data/orchestrator.db` sur le VOLUME `data` (jamais
+  dans l'image), `ADMIN_PASSWORD` en secret Fly à poser AVANT le premier
+  démarrage (il seede le projet `pos`), `PORT` = port interne 8080. Le dashboard
+  est reconstruit dans l'image (étape Vite). Le PWA de production pointe vers
+  l'orchestrateur via `VITE_ORCHESTRATOR_URL` sur Vercel.
+- **La base est le seul état** : elle vit sur le volume, pas dans l'image ni en
+  CI. Ne jamais `git`-iser `orchestrator/data/`. Un déploiement démarre propre
+  (tables + projet `pos` seedés par `migrations.sql` + `index.mjs`).

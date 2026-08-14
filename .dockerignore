@@ -1,0 +1,18 @@
+# Contexte Docker : ne jamais embarquer les données locales ni les secrets.
+**/node_modules
+**/dist
+dist/
+.output/
+.wrangler/
+.git/
+.gitignore
+orchestrator/
+legacy/
+docs/
+tools/
+*.log
+.env
+backend/.env
+Dockerfile
+.dockerignore
+fly.toml

@@ -7,6 +7,7 @@ import {
   fetchConfig,
   fetchProjects,
   fetchShops,
+  fetchStats,
   getProjectName,
   getScope,
   login as apiLogin,
@@ -17,6 +18,8 @@ import {
   type Config,
   type Project,
   type Shop,
+  type ShopStats,
+  type Stats,
 } from "./api";
 import {
   AlertIcon,
@@ -47,6 +50,9 @@ const fmtDateTime = (ms: number | null | undefined): string =>
         minute: "2-digit",
       })
     : "—";
+
+const fmtFcfa = (n: number | null | undefined): string =>
+  n == null ? "—" : `${Math.round(n).toLocaleString("fr-FR")} FCFA`;
 
 // Une caisse est « en ligne » si on a eu de ses nouvelles il y a moins de 2 minutes
 // (le handshake a lieu chaque minute quand l'app est ouverte).
@@ -126,6 +132,7 @@ function Login({ onLogin }: { onLogin: () => void }) {
 // ── Ligne client ──────────────────────────────────────────────────────────────────
 function ShopRow({
   shop,
+  stats,
   lastSeen,
   present,
   onExtend,
@@ -133,6 +140,7 @@ function ShopRow({
   onMessage,
 }: {
   shop: Shop;
+  stats?: ShopStats;
   lastSeen: number | null;
   present: boolean;
   onExtend: (shop: Shop) => void;
@@ -177,6 +185,7 @@ function ShopRow({
             {present ? "En ligne" : "Hors ligne"}
           </span>
         </td>
+        <td className="mono">{stats ? fmtFcfa(stats.totals.revenue) : "—"}</td>
         <td className="mono">{shop.app_version_used ?? "—"}</td>
         <td>
           <span className="muted">{actionLabel(shop.last_command)}</span> {deliveryBadge(shop.last_command).node}
@@ -203,7 +212,33 @@ function ShopRow({
       </tr>
       {open && (
         <tr className="detail-row">
-          <td colSpan={10}>
+          <td colSpan={11}>
+            {stats && (
+              <div className="history">
+                <h3>Activité 7 jours (données réelles)</h3>
+                <div className="history-item">
+                  <strong>{stats.store_name}</strong>
+                  <span className="muted mono">
+                    CA {fmtFcfa(stats.totals.revenue)} · bénéfice {fmtFcfa(stats.totals.profit)} ·{" "}
+                    {stats.totals.sales} vente{stats.totals.sales > 1 ? "s" : ""} · {stats.totals.items} article
+                    {stats.totals.items > 1 ? "s" : ""}
+                  </span>
+                </div>
+                {stats.top_products.length > 0 && (
+                  <div className="history">
+                    <h3>Top produits</h3>
+                    {stats.top_products.map((p) => (
+                      <div className="history-item" key={p.name}>
+                        <span>{p.name}</span>
+                        <span className="muted mono">
+                          × {p.quantity} · {fmtFcfa(p.revenue)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             <div className="history">
               <h3>Commandes récentes</h3>
               {!history ? (
@@ -363,6 +398,7 @@ function App() {
   const projectName = getProjectName();
   const [config, setConfig] = useState<Config | null>(null);
   const [shops, setShops] = useState<Shop[]>([]);
+  const [stats, setStats] = useState<Stats | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [filter, setFilter] = useState("");
   const [projectFilter, setProjectFilter] = useState("");
@@ -378,12 +414,15 @@ function App() {
 
   const refresh = useCallback(async () => {
     try {
-      const [cfg, shopsRes] = await Promise.all([
+      const filter = scope === "master" && projectFilter ? projectFilter : undefined;
+      const [cfg, shopsRes, statsRes] = await Promise.all([
         fetchConfig(),
-        fetchShops(scope === "master" && projectFilter ? projectFilter : undefined),
+        fetchShops(filter),
+        fetchStats(filter),
       ]);
       setConfig(cfg);
       setShops(shopsRes.shops);
+      setStats(statsRes);
       if (scope === "master") {
         const { projects: proj } = await fetchProjects();
         setProjects(proj);
@@ -435,6 +474,8 @@ function App() {
       .toLowerCase()
       .includes(filter.toLowerCase()),
   );
+
+  const shopStatsOf = new Map((stats?.shops ?? []).map((s) => [s.device_id, s]));
 
   const run = async (fn: () => Promise<unknown>, msg: string) => {
     setBusy(true);
@@ -572,6 +613,18 @@ function App() {
               <div className="k">En attente</div>
               <div className="v warn">{expiredCount}</div>
             </div>
+            <div className="stat">
+              <div className="k">CA 7 j (réel)</div>
+              <div className="v">{fmtFcfa(stats?.totals.revenue)}</div>
+            </div>
+            <div className="stat">
+              <div className="k">Bénéfice 7 j</div>
+              <div className="v ok">{fmtFcfa(stats?.totals.profit)}</div>
+            </div>
+            <div className="stat">
+              <div className="k">Ventes 7 j</div>
+              <div className="v">{stats?.totals.sales ?? "—"}</div>
+            </div>
           </div>
 
           <div className="table-wrap">
@@ -585,6 +638,7 @@ function App() {
                   <th>Expire le</th>
                   <th>Dernière synchro</th>
                   <th>En ligne</th>
+                  <th>CA 7 j</th>
                   <th>Version</th>
                   <th>Dernière commande</th>
                   <th>Actions</th>
@@ -594,7 +648,7 @@ function App() {
                 {!ready &&
                   Array.from({ length: 5 }).map((_, i) => (
                     <tr className="skeleton-row" key={i}>
-                      {Array.from({ length: 10 }).map((_, j) => (
+                      {Array.from({ length: 11 }).map((_, j) => (
                         <td key={j}>
                           <div className="skeleton" />
                         </td>
@@ -608,6 +662,7 @@ function App() {
                       <ShopRow
                         key={shop.id}
                         shop={shop}
+                        stats={shopStatsOf.get(shop.device_id)}
                         lastSeen={lastSeen}
                         present={presentOf(shop)}
                         onExtend={(s) => {
@@ -624,7 +679,7 @@ function App() {
                   })}
                 {ready && filtered.length === 0 && (
                   <tr>
-                    <td colSpan={10}>
+                    <td colSpan={11}>
                       <div className="empty">
                         <InboxIcon size={28} />
                         <strong>Aucune caisse</strong>

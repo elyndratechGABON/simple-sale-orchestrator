@@ -6,8 +6,8 @@
 --
 -- La table `shops` porte l'app_origin (défaut 'pos') : le champ qui sépare les données
 -- par application dès maintenant, pour qu'une seconde app (CRM, …) s'ajoute demain sans
--- réécrire le schéma. Le dashboard ne lit jamais `payload` de sync_payloads — stockage
--- brut et routage uniquement.
+-- réécrire le schéma. Le dashboard ne voit jamais le BRUT de sync_payloads : le backend
+-- l'agrège (GET /api/v1/admin/stats) et n'expose que des totaux + top produits.
 
 CREATE TABLE IF NOT EXISTS shops (
   id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,8 +52,9 @@ CREATE INDEX IF NOT EXISTS idx_admin_commands_device ON admin_commands (device_i
 CREATE INDEX IF NOT EXISTS idx_admin_commands_pending
   ON admin_commands (device_id, delivered_at, superseded_at);
 
--- Stockage brut des synchronisations : le serveur ne lit ni n'interprète `payload`,
--- il le range tel quel et route via app_origin.
+-- Stockage brut des synchronisations : le serveur range `payload` tel quel et route
+-- via app_origin. Seule l'agrégation /api/v1/admin/stats (dernier payload par caisse)
+-- le relit — jamais le brut n'est exposé à la caisse ni au dashboard.
 CREATE TABLE IF NOT EXISTS sync_payloads (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   device_id   TEXT NOT NULL,
