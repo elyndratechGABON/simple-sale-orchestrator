@@ -1,0 +1,10 @@
+{
+  "name": "project-scanner",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Analyse un repo d'application et génère son manifest pour l'orchestrateur.",
+  "scripts": {
+    "scan": "node scan.mjs"
+  }
+}

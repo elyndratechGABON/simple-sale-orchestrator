@@ -58,13 +58,18 @@ serveur à la réception. Ne pas écrire de logique « push » dans le backend.
   lit jamais directement. Le backend les agrège (`GET /api/v1/admin/stats` —
   dernier payload par caisse, totaux + top 5 produits, scope projet) et n'expose
   que ces totaux.
-- **Déploiement public = Fly.io** (`fly.toml` + `Dockerfile`). Le backend est
-  Node ≥ 22.5 (`node:sqlite`) + fichier SQLite : ni serverless ni Cloudflare
-  Worker. `ORCHESTRATOR_DB=/data/orchestrator.db` sur le VOLUME `data` (jamais
-  dans l'image), `ADMIN_PASSWORD` en secret Fly à poser AVANT le premier
-  démarrage (il seede le projet `pos`), `PORT` = port interne 8080. Le dashboard
-  est reconstruit dans l'image (étape Vite). Le PWA de production pointe vers
-  l'orchestrateur via `VITE_ORCHESTRATOR_URL` sur Vercel.
+- **Déploiement public = VM Oracle Cloud Always Free** (`deploy/oracle-setup.sh`,
+  0 $/mo). Le backend est Node ≥ 22.5 (`node:sqlite`) + fichier SQLite : ni
+  serverless ni Cloudflare Worker. Le script installe Node 24, Caddy (HTTPS
+  Let's Encrypt), un service systemd et `ORCHESTRATOR_DB=/var/lib/orchestrator/
+  orchestrator.db` (disque persistant, hors dépôt). `ADMIN_PASSWORD` écrit dans
+  `backend/.env` (fichier déjà supporté par le backend). Prérequis : domaine
+  (DuckDNS OK) pointé sur l'IP de la VM + TCP 80/443 ouverts dans la security
+  list OCI (le firewall de la VM ne suffit pas). Le PWA de production pointe
+  vers l'orchestrateur via `VITE_ORCHESTRATOR_URL` sur Vercel.
+- **Fly.io est une alternative payante** (`fly.toml` + `Dockerfile`, ~2 $/mo) :
+  plus de tier gratuit pour les nouveaux comptes depuis 2024. Ne pas y
+  déployer sans décision explicite de payer.
 - **La base est le seul état** : elle vit sur le volume, pas dans l'image ni en
   CI. Ne jamais `git`-iser `orchestrator/data/`. Un déploiement démarre propre
   (tables + projet `pos` seedés par `migrations.sql` + `index.mjs`).

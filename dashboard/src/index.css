@@ -559,6 +559,12 @@ button {
   border-color: color-mix(in oklab, var(--ok) 22%, transparent);
 }
 
+.alert-banner.new-shop {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: color-mix(in oklab, var(--accent) 22%, transparent);
+}
+
 /* ---- Table ---- */
 
 .table-wrap {

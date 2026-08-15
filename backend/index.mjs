@@ -14,7 +14,7 @@
 //
 // Node ≥ 22.5 requis (module natif node:sqlite). Express est la seule dépendance.
 import { createRequire } from "node:module";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -55,7 +55,30 @@ const ADMIN_PASSWORD = EXPLICIT ? process.env.ADMIN_PASSWORD : randomBytes(8).to
 // appartient à un projet via `shops.app_origin` (défaut 'pos'). La connexion sans nom
 // de projet est l'administrateur (scope "master"), qui voit et gère TOUT. Le projet de
 // référence 'pos' est semé après l'ouverture de la base (cf. plus bas).
+//
+// Un projet peut être adossé à un MANIFEST (dossier `backend/manifests/*.json`) : le
+// fichier décrit le type d'app, son tarif et ses KPI. Généré par `tools/project-scanner`
+// pour chaque app du réseau. Quand un handshake arrive avec un `app_origin` inconnu,
+// le manifest correspondant (s'il existe) sert à provisionner le projet correctement.
 const projectById = (id) => db.prepare("SELECT * FROM projects WHERE id = ?").get(id);
+
+// ── Registre des manifests (types de projet connus) ────────────────────────────────
+const MANIFESTS_DIR = join(__dirname, "manifests");
+const manifests = new Map();
+if (existsSync(MANIFESTS_DIR)) {
+  for (const file of readdirSync(MANIFESTS_DIR).filter((f) => f.endsWith(".json"))) {
+    try {
+      const m = JSON.parse(readFileSync(join(MANIFESTS_DIR, file), "utf8"));
+      if (m && typeof m.id === "string" && m.id) manifests.set(m.id, m);
+      else console.warn(`[manifest] ignoré (${file}) : id manquant.`);
+    } catch (e) {
+      console.warn(`[manifest] ignoré (${file}) : ${e.message}`);
+    }
+  }
+}
+console.log(
+  `[manifest] ${manifests.size} type(s) de projet chargé(s) : ${[...manifests.keys()].join(", ") || "—"}`,
+);
 
 // ── Base SQLite (même fichier que l'ancien server.mjs) ────────────────────────────
 // ORCHESTRATOR_DB permet de pointer ailleurs (tests, déploiement) ; défaut : la base
@@ -83,11 +106,44 @@ addShopColumn("app_version_used", "app_version_used TEXT");
 addShopColumn("last_sync_at", "last_sync_at INTEGER");
 addShopColumn("app_origin", "app_origin TEXT NOT NULL DEFAULT 'pos'");
 
+// Colonnes projets ajoutées (tarif, essai, type) — pilotées par manifest, ou réglées à
+// la main par le master. SQLite n'a pas `ADD COLUMN IF NOT EXISTS`.
+const projectColumns = columnNames("projects");
+const addProjectColumn = (name, ddl) => {
+  if (!projectColumns.includes(name)) db.exec(`ALTER TABLE projects ADD COLUMN ${ddl}`);
+};
+addProjectColumn("type", "type TEXT");
+addProjectColumn("price_per_month_fcfa", "price_per_month_fcfa INTEGER");
+addProjectColumn("trial_days", "trial_days INTEGER");
+
+// ── Tarif & essai effectifs d'un projet ─────────────────────────────────────────────
+// Priorité : valeur enregistrée sur le projet > manifest du même id > valeurs globales.
+function projectConfig(origin) {
+  const proj = origin ? projectById(origin) : null;
+  if (proj?.price_per_month_fcfa != null || proj?.trial_days != null) {
+    return {
+      price_per_month_fcfa: proj.price_per_month_fcfa ?? PRICE_PER_MONTH_FCFA,
+      trial_days: proj.trial_days ?? TRIAL_DAYS,
+    };
+  }
+  const m = origin ? manifests.get(origin) : null;
+  return {
+    price_per_month_fcfa: m?.pricing?.price_per_month_fcfa ?? PRICE_PER_MONTH_FCFA,
+    trial_days: m?.pricing?.trial_days ?? TRIAL_DAYS,
+  };
+}
+
 // Projet de référence : 'pos' prend le mot de passe admin par défaut, pour que la
-// connexion historique (sans nom de projet) retrouve son dashboard.
-db.prepare(
-  "INSERT OR IGNORE INTO projects (id, name, password, created_at) VALUES ('pos', 'Caisse', ?, ?)",
-).run(ADMIN_PASSWORD, Date.now());
+// connexion historique (sans nom de projet) retrouve son dashboard. Tarif/essai/type
+// initialisés depuis son manifest s'il existe.
+{
+  const seedCfg = projectConfig("pos");
+  db.prepare(
+    `INSERT OR IGNORE INTO projects
+       (id, name, password, created_at, type, price_per_month_fcfa, trial_days)
+     VALUES ('pos', 'Caisse', ?, ?, ?, ?, ?)`,
+  ).run(ADMIN_PASSWORD, Date.now(), seedCfg.type ?? null, seedCfg.price_per_month_fcfa, seedCfg.trial_days);
+}
 
 // ── Requêtes ───────────────────────────────────────────────────────────────────────
 const byId = (id) => db.prepare("SELECT * FROM shops WHERE id = ?").get(id);
@@ -254,8 +310,12 @@ app.post("/api/login", (req, res) => {
   res.json({ token, scope: session.scope, project: session.project ?? null, name: session.name ?? null });
 });
 
-app.get("/api/config", (_req, res) => {
-  res.json({ price_per_month_fcfa: PRICE_PER_MONTH_FCFA, trial_days: TRIAL_DAYS });
+app.get("/api/config", (req, res) => {
+  // ?project=<id> → tarif/essai du projet (celui du manifest ou réglé par le master),
+  // sinon les valeurs globales. Le dashboard s'en sert pour l'aperçu « montant → jours ».
+  const project = str(req.query.project);
+  const cfg = projectConfig(project || null);
+  res.json({ price_per_month_fcfa: cfg.price_per_month_fcfa, trial_days: cfg.trial_days, project: project || null });
 });
 
 // ── SSE temps réel : le dashboard voit un client arriver sans rafraîchir ───────────
@@ -336,15 +396,28 @@ app.post("/api/v1/handshake", (req, res) => {
 
   // Le projet cible est créé s'il n'existe pas : une caisse qui arrive avec un
   // app_origin inconnu est rattachée à un projet auto-créé (mot de passe aléatoire),
-  // que l'administrateur reprend ensuite dans son dashboard master.
+  // que l'administrateur reprend ensuite dans son dashboard master. Si un manifest
+  // existe pour cet app_origin, il fixe d'emblée nom, type et tarif du projet.
   if (!projectById(app_origin)) {
+    const m = manifests.get(app_origin);
     db.prepare(
-      "INSERT INTO projects (id, name, password, created_at) VALUES (?, ?, ?, ?)",
-    ).run(app_origin, app_origin, randomBytes(8).toString("hex"), now);
+      `INSERT INTO projects (id, name, password, created_at, type, price_per_month_fcfa, trial_days)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      app_origin,
+      m?.name ?? app_origin,
+      randomBytes(8).toString("hex"),
+      now,
+      m?.type ?? null,
+      m?.pricing?.price_per_month_fcfa ?? null,
+      m?.pricing?.trial_days ?? null,
+    );
     console.log(
-      `[${new Date().toISOString()}] PROJET auto-créé "${app_origin}" (mot de passe aléatoire) — à sécuriser depuis le dashboard master`,
+      `[${new Date().toISOString()}] PROJET auto-créé "${app_origin}"${m ? ` (manifest « ${m.name} »)` : ""} (mot de passe aléatoire) — à sécuriser depuis le dashboard master`,
     );
   }
+
+  const projectCfg = projectConfig(app_origin);
 
   let shop = byDeviceId(device_id);
   if (shop) {
@@ -382,7 +455,7 @@ app.post("/api/v1/handshake", (req, res) => {
       optStr(body.phone),
       optStr(body.location),
       now,
-      now + TRIAL_DAYS * DAY_MS,
+      now + projectCfg.trial_days * DAY_MS,
       now,
       now,
       app_version_used,
@@ -467,16 +540,35 @@ app.post("/api/v1/admin/commands", requireAdmin, (req, res) => {
     applyStatus = () =>
       db.prepare("UPDATE shops SET suspended_at = ?, updated_at = ? WHERE id = ?").run(now, now, shop.id);
   } else if (action_type === "renew") {
-    const days = Math.round(Number(body.days));
-    if (!Number.isFinite(days) || days <= 0)
-      return res.status(400).json({ error: "days invalide." });
+    // Deux saisies possibles : un nombre de jours explicite, ou un montant encaissé
+    // (en FCFA) converti en jours selon le tarif du projet. Le montant prime.
+    const daysInput = Math.round(Number(body.days));
+    const amount = Math.round(Number(body.amount_fcfa));
+    let days;
+    if (Number.isFinite(amount) && amount > 0) {
+      const price = projectConfig(shop.app_origin).price_per_month_fcfa;
+      days = Math.max(1, Math.round((amount / price) * 30));
+    } else if (Number.isFinite(daysInput) && daysInput > 0) {
+      days = daysInput;
+    } else {
+      return res.status(400).json({ error: "days ou amount_fcfa requis." });
+    }
     const new_end_date = Math.max(now, shop.expiry_date) + days * DAY_MS;
-    payload = { new_end_date, days };
-    // Prolonger relance aussi l'abonnement : la suspension est levée.
-    applyStatus = () =>
-      db
-        .prepare("UPDATE shops SET suspended_at = NULL, expiry_date = ?, updated_at = ? WHERE id = ?")
-        .run(new_end_date, now, shop.id);
+    payload = { new_end_date, days, ...(amount > 0 ? { amount_fcfa: amount } : {}) };
+    // Prolonger relance aussi l'abonnement : la suspension est levée. Un montant
+    // encaissé est tracé dans `payments` (historique de facturation par caisse).
+    applyStatus = () => {
+      db.prepare("UPDATE shops SET suspended_at = NULL, expiry_date = ?, updated_at = ? WHERE id = ?").run(
+        new_end_date,
+        now,
+        shop.id,
+      );
+      if (amount > 0) {
+        db.prepare(
+          "INSERT INTO payments (shop_id, amount, days_added, created_at) VALUES (?, ?, ?, ?)",
+        ).run(shop.id, amount, days, now);
+      }
+    };
   } else {
     const message = str(body.message);
     if (!message) return res.status(400).json({ error: "message vide." });
@@ -558,6 +650,29 @@ app.get("/api/v1/admin/shops/:device_id/commands", requireAdmin, (req, res) => {
   });
 });
 
+// ── Historique des paiements d'une caisse (facturation des prolongations) ─────────
+app.get("/api/v1/admin/shops/:device_id/payments", requireAdmin, (req, res) => {
+  const device_id = str(req.params.device_id);
+  const session = sessionOf(req);
+  const shop = byDeviceId(device_id);
+  if (!shop) return res.status(404).json({ error: "Boutique introuvable." });
+  if (session.scope === "project" && shop.app_origin !== session.project)
+    return res.status(403).json({ error: "Boutique hors de ce projet." });
+  res.json({
+    payments: db
+      .prepare("SELECT * FROM payments WHERE shop_id = ? ORDER BY created_at DESC")
+      .all(shop.id),
+  });
+});
+
+// ── Liste publique des projets (id + nom seulement) : sert au sélecteur du login. ──
+// Aucune donnée sensible : pas de mot de passe, pas de compteurs.
+app.get("/api/v1/public/projects", (_req, res) => {
+  res.json({
+    projects: db.prepare("SELECT id, name FROM projects ORDER BY name ASC").all(),
+  });
+});
+
 // ── Protocole v2 : stats réelles par projet (agrégées depuis sync_payloads) ───────
 // Le dashboard affiche les données que les caisses déposent réellement. Chaque caisse
 // envoie une fenêtre glissante de 7 j déjà cumulée : on ne retient donc que le DERNIER
@@ -565,7 +680,8 @@ app.get("/api/v1/admin/shops/:device_id/commands", requireAdmin, (req, res) => {
 // Jamais le brut : uniquement des totaux et des top produits.
 function aggregateStats(shops) {
   const zero = { revenue: 0, profit: 0, sales: 0, items: 0, customers: 0 };
-  if (shops.length === 0) return { generated_at: null, totals: zero, top_products: [], shops: [] };
+  if (shops.length === 0)
+    return { generated_at: null, totals: zero, top_products: [], by_day: [], shops: [] };
 
   const ids = shops.map((s) => s.device_id);
   const rows = db
@@ -597,11 +713,13 @@ function aggregateStats(shops) {
         customers: Number(t.customers) || 0,
       },
       top_products: Array.isArray(p.top_products) ? p.top_products : [],
+      by_day: Array.isArray(p.by_day) ? p.by_day : [],
     });
   }
 
   const totals = { ...zero };
   const top = new Map();
+  const dayAgg = new Map();
   let generated_at = null;
   for (const st of byDevice.values()) {
     for (const k of Object.keys(totals)) totals[k] += st.totals[k];
@@ -613,35 +731,87 @@ function aggregateStats(shops) {
       cur.revenue += Number(prod.revenue) || 0;
       top.set(name, cur);
     }
+    // Série chronologique du projet : les fenêtres glissantes de 7 j de chaque caisse
+    // sont sommées jour par jour (même jour = même cumul).
+    for (const d of st.by_day) {
+      const day = Number(d?.day) || 0;
+      if (!day) continue;
+      const cur = dayAgg.get(day) ?? { day, revenue: 0, profit: 0, sales: 0 };
+      cur.revenue += Number(d.revenue) || 0;
+      cur.profit += Number(d.profit) || 0;
+      cur.sales += Number(d.sales) || 0;
+      dayAgg.set(day, cur);
+    }
   }
 
   return {
     generated_at,
     totals,
     top_products: [...top.values()].sort((a, b) => b.revenue - a.revenue).slice(0, 5),
+    by_day: [...dayAgg.values()].sort((a, b) => a.day - b.day),
     shops: shops
       .filter((s) => byDevice.has(s.device_id))
       .map((s) => ({ device_id: s.device_id, store_name: s.store_name, ...byDevice.get(s.device_id) })),
   };
 }
 
+// ── Vue Abonnements (comptes + MRR) — agrégée côté serveur pour rester cohérente. ──
+// MRR estimé = somme des tarifs mensuels des comptes ACTIFS du scope. Un compte actif
+// est « expirant » quand son échéance est sous 7 ou 30 jours. L'échéance fait foi.
+function computeSubscriptions(shops) {
+  const now = Date.now();
+  const s = {
+    total: shops.length,
+    active: 0,
+    suspended: 0,
+    expired: 0,
+    online: 0,
+    expiring_7d: 0,
+    expiring_30d: 0,
+    mrr_fcfa: 0,
+  };
+  for (const shop of shops) {
+    const st = computeStatus(shop);
+    if (st === "active") s.active++;
+    else if (st === "suspended") s.suspended++;
+    else if (st === "expired") s.expired++;
+    if (shop.last_sync_at && now - shop.last_sync_at < ONLINE_WINDOW_MS) s.online++;
+    if (st === "active") {
+      const left = shop.expiry_date - now;
+      if (left <= 7 * DAY_MS) s.expiring_7d++;
+      if (left <= 30 * DAY_MS) s.expiring_30d++;
+      s.mrr_fcfa += projectConfig(shop.app_origin).price_per_month_fcfa;
+    }
+  }
+  return s;
+}
+
+// Une caisse est « en ligne » si on a eu de ses nouvelles il y a moins de 2 minutes.
+const ONLINE_WINDOW_MS = 120_000;
+
 app.get("/api/v1/admin/stats", requireAdmin, (req, res) => {
   const session = sessionOf(req);
   // Scope projet → ses caisses uniquement. Master → tout, ou `?project=` pour filtrer.
   const origin =
     session.scope === "project" ? session.project : str(req.query.project) || null;
-  res.json({ project: origin, ...aggregateStats(listShops(origin)) });
+  const shops = listShops(origin);
+  res.json({
+    project: origin,
+    subscriptions: computeSubscriptions(shops),
+    ...aggregateStats(shops),
+  });
 });
 
 // ── Protocole v2 : gestion des projets (master uniquement) ────────────────────────
 app.get("/api/v1/admin/projects", requireMaster, (_req, res) => {
   const projects = db
     .prepare(
-      `SELECT p.id, p.name, p.created_at,
+      `SELECT p.id, p.name, p.created_at, p.type, p.price_per_month_fcfa, p.trial_days,
               (SELECT COUNT(*) FROM shops s WHERE s.app_origin = p.id) AS shop_count
        FROM projects p ORDER BY p.created_at ASC`,
     )
-    .all();
+    .all()
+    .map((p) => ({ ...p, from_manifest: manifests.has(p.id) }));
   res.json({ projects });
 });
 
@@ -649,17 +819,26 @@ app.post("/api/v1/admin/projects", requireMaster, (req, res) => {
   const id = str(req.body?.id);
   const name = str(req.body?.name);
   const password = str(req.body?.password);
+  const type = str(req.body?.type) || null;
+  const price = Math.round(Number(req.body?.price_per_month_fcfa));
+  const trial = Math.round(Number(req.body?.trial_days));
   if (!id || !name || !password)
     return res.status(400).json({ error: "id, name et password requis." });
   if (!/^[a-z0-9_-]+$/.test(id))
     return res.status(400).json({ error: "id invalide (minuscules, chiffres, _ ou -)." });
   if (projectById(id))
     return res.status(409).json({ error: "Ce projet existe déjà." });
-  db.prepare("INSERT INTO projects (id, name, password, created_at) VALUES (?, ?, ?, ?)").run(
+  db.prepare(
+    `INSERT INTO projects (id, name, password, created_at, type, price_per_month_fcfa, trial_days)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
     id,
     name,
     password,
     Date.now(),
+    type,
+    Number.isFinite(price) && price > 0 ? price : null,
+    Number.isFinite(trial) && trial > 0 ? trial : null,
   );
   res.status(201).json({ project: projectById(id) });
 });
@@ -671,6 +850,25 @@ app.post("/api/v1/admin/projects/:id/password", requireMaster, (req, res) => {
   if (!password) return res.status(400).json({ error: "password requis." });
   db.prepare("UPDATE projects SET password = ? WHERE id = ?").run(password, proj.id);
   res.json({ ok: true });
+});
+
+// Tarif / essai / type d'un projet — pilote la facturation (montant → jours) et la
+// durée d'essai appliquée aux nouvelles caisses. Vide un champ pour repasser au défaut.
+app.post("/api/v1/admin/projects/:id/config", requireMaster, (req, res) => {
+  const proj = projectById(str(req.params.id));
+  if (!proj) return res.status(404).json({ error: "Projet introuvable." });
+  const type = str(req.body?.type) || null;
+  const price = Math.round(Number(req.body?.price_per_month_fcfa));
+  const trial = Math.round(Number(req.body?.trial_days));
+  db.prepare(
+    `UPDATE projects SET type = ?, price_per_month_fcfa = ?, trial_days = ? WHERE id = ?`,
+  ).run(
+    type,
+    Number.isFinite(price) && price > 0 ? price : null,
+    Number.isFinite(trial) && trial > 0 ? trial : null,
+    proj.id,
+  );
+  res.json({ ok: true, project: projectById(proj.id) });
 });
 
 // ── Rétrocompat : routes de l'ancien server.mjs (builds déjà installées) ──────────

@@ -67,10 +67,15 @@ CREATE INDEX IF NOT EXISTS idx_sync_payloads_device ON sync_payloads (device_id,
 -- Les projets : chaque projet a son propre dashboard dédié (connexion par mot de passe
 -- indépendant). `shops.app_origin` rattache chaque caisse à son projet. Le projet 'pos'
 -- est semé au démarrage (index.mjs) ; les projets inconnus au handshake sont auto-créés
--- avec un mot de passe aléatoire, puis repris par l'administrateur.
+-- avec un mot de passe aléatoire, puis repris par l'administrateur. `type`,
+-- `price_per_month_fcfa` et `trial_days` sont pilotés par le manifest de l'app
+-- (backend/manifests/) ou réglés à la main par le master (POST .../projects/:id/config).
 CREATE TABLE IF NOT EXISTS projects (
-  id         TEXT PRIMARY KEY,
-  name       TEXT NOT NULL,
-  password   TEXT NOT NULL,
-  created_at INTEGER NOT NULL
+  id                  TEXT PRIMARY KEY,
+  name                TEXT NOT NULL,
+  password            TEXT NOT NULL,
+  created_at          INTEGER NOT NULL,
+  type                TEXT,
+  price_per_month_fcfa INTEGER,
+  trial_days          INTEGER
 );

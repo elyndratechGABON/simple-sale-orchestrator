@@ -36,7 +36,12 @@ export function clearToken(): void {
 export interface AdminCommand {
   id: string;
   action_type: "suspend" | "renew" | "broadcast_message";
-  payload: { new_end_date?: number; days?: number; message_text?: string };
+  payload: {
+    new_end_date?: number;
+    days?: number;
+    amount_fcfa?: number;
+    message_text?: string;
+  };
   expires_at: number;
   created_at: number;
   delivered_at: number | null;
@@ -65,6 +70,7 @@ export interface Shop {
 export interface Config {
   price_per_month_fcfa: number;
   trial_days: number;
+  project: string | null;
 }
 
 export interface Project {
@@ -72,6 +78,18 @@ export interface Project {
   name: string;
   created_at: number;
   shop_count: number;
+  type: string | null;
+  price_per_month_fcfa: number | null;
+  trial_days: number | null;
+  from_manifest: boolean;
+}
+
+export interface Payment {
+  id: number;
+  shop_id: number;
+  amount: number;
+  days_added: number;
+  created_at: number;
 }
 
 export interface BusinessTotals {
@@ -88,19 +106,40 @@ export interface TopProduct {
   revenue: number;
 }
 
+export interface DayPoint {
+  day: number;
+  revenue: number;
+  profit: number;
+  sales: number;
+}
+
+export interface Subscriptions {
+  total: number;
+  active: number;
+  suspended: number;
+  expired: number;
+  online: number;
+  expiring_7d: number;
+  expiring_30d: number;
+  mrr_fcfa: number;
+}
+
 export interface ShopStats {
   device_id: string;
   store_name: string;
   last_sync_at: number;
   totals: BusinessTotals;
   top_products: TopProduct[];
+  by_day: DayPoint[];
 }
 
 export interface Stats {
   project: string | null;
   generated_at: number | null;
+  subscriptions: Subscriptions;
   totals: BusinessTotals;
   top_products: TopProduct[];
+  by_day: DayPoint[];
   shops: ShopStats[];
 }
 
@@ -134,8 +173,13 @@ export function login(
   });
 }
 
-export function fetchConfig(): Promise<Config> {
-  return request("/api/config");
+export function fetchConfig(project?: string): Promise<Config> {
+  return request(`/api/config${project ? `?project=${encodeURIComponent(project)}` : ""}`);
+}
+
+/** Liste publique des projets (id + nom) — alimente le sélecteur de l'écran de connexion. */
+export function fetchPublicProjects(): Promise<{ projects: { id: string; name: string }[] }> {
+  return request("/api/v1/public/projects");
 }
 
 export function fetchShops(project?: string): Promise<{ shops: Shop[] }> {
@@ -151,9 +195,17 @@ export function fetchCommandHistory(deviceId: string): Promise<{ commands: Admin
   return request(`/api/v1/admin/shops/${encodeURIComponent(deviceId)}/commands`);
 }
 
+/** Historique de facturation d'une caisse (montants et jours ajoutés à chaque prolongation). */
+export function fetchPayments(deviceId: string): Promise<{ payments: Payment[] }> {
+  return request(`/api/v1/admin/shops/${encodeURIComponent(deviceId)}/payments`);
+}
+
 export function sendCommand(
   deviceId: string,
-  body: { action_type: "suspend" | "renew" | "broadcast_message"; days?: number; message?: string },
+  body:
+    | { action_type: "suspend" }
+    | { action_type: "renew"; days?: number; amount_fcfa?: number }
+    | { action_type: "broadcast_message"; message: string },
 ): Promise<{ command: AdminCommand }> {
   return request("/api/v1/admin/commands", {
     method: "POST",
@@ -165,10 +217,17 @@ export function fetchProjects(): Promise<{ projects: Project[] }> {
   return request("/api/v1/admin/projects");
 }
 
-export function createProject(id: string, name: string, password: string): Promise<{ project: Project }> {
+export function createProject(
+  id: string,
+  name: string,
+  password: string,
+  type?: string,
+  price?: number,
+  trial?: number,
+): Promise<{ project: Project }> {
   return request("/api/v1/admin/projects", {
     method: "POST",
-    body: JSON.stringify({ id, name, password }),
+    body: JSON.stringify({ id, name, password, type, price_per_month_fcfa: price, trial_days: trial }),
   });
 }
 
@@ -176,6 +235,17 @@ export function setProjectPassword(id: string, password: string): Promise<{ ok: 
   return request(`/api/v1/admin/projects/${encodeURIComponent(id)}/password`, {
     method: "POST",
     body: JSON.stringify({ password }),
+  });
+}
+
+/** Réglage du tarif / essai / type d'un projet (source de vérité de la facturation). */
+export function setProjectConfig(
+  id: string,
+  cfg: { type?: string; price_per_month_fcfa?: number; trial_days?: number },
+): Promise<{ ok: boolean; project: Project }> {
+  return request(`/api/v1/admin/projects/${encodeURIComponent(id)}/config`, {
+    method: "POST",
+    body: JSON.stringify(cfg),
   });
 }
 

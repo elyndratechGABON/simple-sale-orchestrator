@@ -1,0 +1,58 @@
+{
+  "id": "pos",
+  "name": "Caisse",
+  "type": "pos",
+  "pricing": {
+    "price_per_month_fcfa": 10000,
+    "trial_days": 30
+  },
+  "period_days": 7,
+  "metrics": [
+    {
+      "key": "revenue",
+      "label": "Chiffre d'affaires",
+      "kind": "money"
+    },
+    {
+      "key": "profit",
+      "label": "Bénéfice",
+      "kind": "money"
+    },
+    {
+      "key": "sales",
+      "label": "Ventes",
+      "kind": "count"
+    },
+    {
+      "key": "items",
+      "label": "Articles vendus",
+      "kind": "count"
+    },
+    {
+      "key": "customers",
+      "label": "Clients servis",
+      "kind": "count"
+    }
+  ],
+  "series": {
+    "by_day": {
+      "keys": [
+        "revenue",
+        "profit",
+        "sales"
+      ]
+    },
+    "top_products": {
+      "keys": [
+        "quantity",
+        "revenue"
+      ]
+    }
+  },
+  "source": {
+    "repo": "tanstack_start_ts",
+    "package_name": "tanstack_start_ts",
+    "detected_type": "pos",
+    "detected_tables": []
+  }
+}
