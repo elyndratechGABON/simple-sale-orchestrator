@@ -110,6 +110,12 @@ function App() {
     };
   }, [token]);
 
+  useEffect(() => {
+    const onExpired = () => setToken(null);
+    window.addEventListener("orch:session-expired", onExpired);
+    return () => window.removeEventListener("orch:session-expired", onExpired);
+  }, []);
+
   const logout = useCallback(() => {
     clearToken();
     setToken(null);

@@ -435,7 +435,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(path, { ...options, headers });
-  if (res.status === 401) throw new AuthError("Authentification requise.");
+  if (res.status === 401) {
+    clearToken();
+    window.dispatchEvent(new Event("orch:session-expired"));
+    throw new AuthError("Authentification requise.");
+  }
   const data = (await res.json().catch(() => ({}))) as { error?: string };
   if (!res.ok) throw new Error(data.error ?? "Erreur serveur.");
   return data as T;
