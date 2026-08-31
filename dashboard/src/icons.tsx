@@ -168,3 +168,22 @@ export const BanknoteIcon = (p: IconProps) => (
     <path d="M6 12h.01M18 12h.01" />
   </Svg>
 );
+
+export const SmartphoneIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="5" y="2" width="14" height="20" rx="2" />
+    <path d="M12 18h.01" />
+  </Svg>
+);
+
+export const ActivityIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+  </Svg>
+);
+
+export const ShieldIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+  </Svg>
+);

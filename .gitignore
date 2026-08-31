@@ -6,3 +6,5 @@ dist/
 bun.lock
 orchestrator/data/
 *.log
+pnpm-lock.yaml
+backend/.test_*
