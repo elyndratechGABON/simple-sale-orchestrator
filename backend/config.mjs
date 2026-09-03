@@ -23,9 +23,10 @@ export const PRICE_PER_MONTH_FCFA = Number(process.env.PRICE_PER_MONTH_FCFA ?? 1
 export const TRIAL_DAYS = Number(process.env.TRIAL_DAYS ?? 30);
 // ── Paliers d'abonnement ───────────────────────────────────────────────────────────
 // Un paiement couvre 30 jours et fixe le nombre d'appareils du compte. Configurable par
-// env : PRICE_TIERS="10000:2,25000:4,50000:8". Le tarif historique PRICE_PER_MONTH_FCFA
-// ne sert plus qu'aux routes legacy sans palier reconnu.
-export const PRICE_TIERS = String(process.env.PRICE_TIERS ?? "10000:2,25000:4,50000:8")
+// env : PRICE_TIERS="10000:3,25000:5,50000:9". Le tarif historique PRICE_PER_MONTH_FCFA
+// ne sert plus qu'aux routes legacy sans palier reconnu. L'écran du propriétaire compte
+// dans le nombre d'appareils affiché (3 = propriétaire + 2 autres, jamais +1).
+export const PRICE_TIERS = String(process.env.PRICE_TIERS ?? "10000:3,25000:5,50000:9")
   .split(",")
   .map((chunk) => {
     const [price, devices] = chunk.split(":").map(Number);
