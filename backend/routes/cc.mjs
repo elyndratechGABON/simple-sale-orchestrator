@@ -8,6 +8,7 @@ import {
   ONLINE_WINDOW_MS,
   COMMAND_TTL_MS,
   PRICE_TIERS,
+  planNameForDevices,
 } from "../config.mjs";
 import {
   str,
@@ -317,6 +318,7 @@ router.get("/api/v1/admin/shops-detail", requireAdmin, (req, res) => {
   const shops = listShops(origin).map((s) => {
     const account = s.account_id ? accountById(s.account_id) : null;
     const resolvedAccount = account ? resolveAccount(account) : null;
+    const accountDevicesList = resolvedAccount ? accountDevices(resolvedAccount.id) : [];
     return {
       id: s.id,
       device_id: s.device_id,
@@ -332,6 +334,11 @@ router.get("/api/v1/admin/shops-detail", requireAdmin, (req, res) => {
       last_sync_at: s.last_sync_at ?? null,
       account_id: s.account_id ?? null,
       account_name: resolvedAccount?.name ?? null,
+      // Abonnement du compte marchand : palier (nom) et écrans utilisés / total.
+      plan_name: resolvedAccount ? planNameForDevices(resolvedAccount.max_devices) : null,
+      plan_price_fcfa: resolvedAccount ? priceForDevices(resolvedAccount.max_devices) : null,
+      account_device_count: accountDevicesList.length,
+      account_max_devices: resolvedAccount?.max_devices ?? null,
       status: computeStatus(s),
       payments: s.payments,
       online: s.last_sync_at ? now - s.last_sync_at < ONLINE_WINDOW_MS : false,

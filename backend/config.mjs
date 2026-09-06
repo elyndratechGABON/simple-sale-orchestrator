@@ -36,6 +36,13 @@ export const PRICE_TIERS = String(process.env.PRICE_TIERS ?? "10000:3,25000:5,50
   })
   .filter(Boolean)
   .sort((a, b) => a.price - b.price);
+
+// Noms commerciaux des paliers (miroir des PLANS du configurateur de la caisse). Clés
+// par nombre d'écrans, jamais par prix : la facturation peut bouger sans casser
+// l'affichage. Au-delà des paliers connus (ou sur mesure) → null, rendu « sur mesure ».
+export const planNameForDevices = (devices) =>
+  devices === 3 ? "Essentiel" : devices === 5 ? "Confort" : devices === 9 ? "Affluence" : null;
+
 export const DAY_MS = 86_400_000;
 // Durée de validité d'un ordre avant qu'il ne soit déclaré « non délivré (expiré) ».
 export const COMMAND_TTL_MS = 30 * DAY_MS;

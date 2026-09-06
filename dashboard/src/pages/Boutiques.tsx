@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchShopsDetail, type ShopDetail } from "../api";
-import { fmtDate, fmtDateTime, statusBadge } from "../utils";
+import { fmtDate, fmtDateTime, fmtFcfa, statusBadge } from "../utils";
 import { InboxIcon } from "../icons";
 import { DataTable } from "../components/ui/DataTable";
 
@@ -70,6 +70,23 @@ export function Boutiques({ onSelect }: Props) {
               key: "account_name",
               label: "Compte",
               render: (s: ShopDetail) => <span>{s.account_name ?? "\u2014"}</span>,
+            },
+            {
+              key: "account_tier",
+              label: "Abonnement",
+              render: (s: ShopDetail) =>
+                s.account_max_devices != null ? (
+                  <span className="mono">
+                    {s.account_device_count}/{s.account_max_devices} \u00e9crans
+                    {s.plan_name ? (
+                      <span className="muted"> \u00b7 {s.plan_name}</span>
+                    ) : s.plan_price_fcfa != null ? (
+                      <span className="muted"> \u00b7 {fmtFcfa(s.plan_price_fcfa)}</span>
+                    ) : null}
+                  </span>
+                ) : (
+                  "\u2014"
+                ),
             },
             {
               key: "device_id",

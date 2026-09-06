@@ -302,6 +302,10 @@ export interface ShopDetail {
   last_sync_at: number | null;
   account_id: number | null;
   account_name: string | null;
+  plan_name: string | null;
+  plan_price_fcfa: number | null;
+  account_device_count: number;
+  account_max_devices: number | null;
   status: string;
   payments: number;
   online: boolean;
