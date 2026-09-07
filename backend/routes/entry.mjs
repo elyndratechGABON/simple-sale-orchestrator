@@ -358,6 +358,25 @@ router.post("/api/v1/sync-data", (req, res) => {
     "INSERT INTO sync_payloads (device_id, app_origin, payload, received_at) VALUES (?, ?, ?, ?)",
   ).run(device_id, origin, JSON.stringify(body.data_payload), now);
   db.prepare("UPDATE shops SET last_sync_at = ?, updated_at = ? WHERE id = ?").run(now, now, shop.id);
+
+  // Accumulation du CA par jour : la fenêtre glissante de 7 j permet de reconstituer le
+  // CA mensuel de chaque caisse sans rien demander de plus à l'app. On écrase la valeur
+  // du jour à chaque sync (idempotent) ; `day` est le minuit LOCAL de l'appareil, en ms.
+  const by_day = Array.isArray(body.data_payload?.by_day) ? body.data_payload.by_day : [];
+  for (const d of by_day) {
+    const day = Math.round(Number(d?.day));
+    if (!Number.isFinite(day) || day <= 0) continue;
+    db.prepare(
+      `INSERT INTO daily_stats (device_id, day, revenue, profit, sales, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(device_id, day) DO UPDATE SET
+         revenue = excluded.revenue,
+         profit  = excluded.profit,
+         sales   = excluded.sales,
+         updated_at = excluded.updated_at`,
+    ).run(device_id, day, Number(d.revenue) || 0, Number(d.profit) || 0, Number(d.sales) || 0, now);
+  }
+
   res.json({ ok: true, received_at: now, status: "active" });
 });
 

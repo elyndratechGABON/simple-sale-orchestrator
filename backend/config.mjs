@@ -19,6 +19,15 @@ if (existsSync(envFile)) {
 }
 
 export const PORT = Number(process.env.PORT ?? 8787);
+// Adresse du relais ops (boîte aux lettres Neon). Le DRAINER la vide par copie à chaque
+// démarrage + périodiquement. Sans .env ni variable d'env, le relais local (npm start
+// dans relay/, port 8080) est présumé ; en production, pointer vers l'URL déployée,
+// ex. https://ecaisse-ops-relay.vercel.app.
+export const OPS_RELAY_URL = String(process.env.OPS_RELAY_URL ?? "http://127.0.0.1:8080").replace(/\/+$/, "");
+// Secret partagé du relais ops (header x-ops-token) — même valeur que l'env OPS_TOKEN du
+// relais déployé. La caisse, elle, l'envoie via VITE_OPS_TOKEN. Vide → relais ouvert (dev).
+export const OPS_TOKEN = process.env.OPS_TOKEN ?? "";
+export const OPS_DRAIN_INTERVAL_MS = Number(process.env.OPS_DRAIN_INTERVAL_MS ?? 3_600_000);
 export const PRICE_PER_MONTH_FCFA = Number(process.env.PRICE_PER_MONTH_FCFA ?? 10_000);
 export const TRIAL_DAYS = Number(process.env.TRIAL_DAYS ?? 30);
 // ── Paliers d'abonnement ───────────────────────────────────────────────────────────
@@ -135,6 +144,49 @@ const addColumn = (table, name, ddl) => {
 };
 addColumn("payments", "account_id", "account_id INTEGER");
 addColumn("admin_commands", "account_id", "account_id INTEGER");
+// La boîte aux lettres accepte désormais `delete_account_request` (approbation/refus de
+// la suppression d'une caisse demandée par l'employé, cf. delete_requests). Le CHECK de
+// la table ne se modifie PAS en place sous SQLite : on reconstruit UNE fois (renommage +
+// recopie), en conservant la colonne `account_id` ajoutée ci-dessus. Détection par le
+// SQL enregistré — une base déjà migrée ne repasse jamais par là.
+{
+  const adminCommandsDdl =
+    db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'admin_commands'").get()?.sql ??
+    "";
+  if (!adminCommandsDdl.includes("delete_account_request")) {
+    db.exec("BEGIN");
+    try {
+      db.exec("ALTER TABLE admin_commands RENAME TO admin_commands_legacy");
+      db.exec(`
+        CREATE TABLE admin_commands (
+          id            TEXT PRIMARY KEY,
+          device_id     TEXT NOT NULL,
+          account_id    INTEGER,
+          action_type   TEXT NOT NULL CHECK (action_type IN ('suspend', 'renew', 'broadcast_message', 'delete_account_request')),
+          payload       TEXT NOT NULL,
+          expires_at    INTEGER NOT NULL,
+          delivered_at  INTEGER,
+          superseded_at INTEGER,
+          created_at    INTEGER NOT NULL
+        )
+      `);
+      db.exec(
+        `INSERT INTO admin_commands (id, device_id, account_id, action_type, payload, expires_at, delivered_at, superseded_at, created_at)
+         SELECT id, device_id, account_id, action_type, payload, expires_at, delivered_at, superseded_at, created_at
+         FROM admin_commands_legacy`,
+      );
+      db.exec("DROP TABLE admin_commands_legacy");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_admin_commands_device ON admin_commands (device_id)");
+      db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_admin_commands_pending ON admin_commands (device_id, delivered_at, superseded_at)",
+      );
+      db.exec("COMMIT");
+    } catch (e) {
+      db.exec("ROLLBACK");
+      throw e;
+    }
+  }
+}
 // Fusion par nom d'enseigne : un compte absorbé garde sa ligne (ses identifiants restent
 // valides à l'authentification) mais redirige vers le compte survivant via merged_into.
 addColumn("accounts", "merged_into", "merged_into INTEGER");

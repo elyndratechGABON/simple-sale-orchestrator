@@ -7,9 +7,10 @@ import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 import express from "express";
 
-import { db, PORT, PRICE_TIERS, TRIAL_DAYS, EXPLICIT, ADMIN_PASSWORD } from "./config.mjs";
+import { db, PORT, PRICE_TIERS, TRIAL_DAYS, EXPLICIT, ADMIN_PASSWORD, OPS_DRAIN_INTERVAL_MS } from "./config.mjs";
 import { migrateShopsToAccounts, mergeAccountsByName, byDeviceId } from "./lib.mjs";
 import { logActivity } from "./routes/audit.mjs";
+import { drainRelayFromOps } from "./drainer.mjs";
 import authRouter from "./routes/auth.mjs";
 import entryRouter from "./routes/entry.mjs";
 import adminRouter from "./routes/admin.mjs";
@@ -77,3 +78,14 @@ server.listen(PORT, () => {
   );
   if (!EXPLICIT) console.log(`Mot de passe du dashboard (défaut généré) : ${ADMIN_PASSWORD}`);
 });
+
+// ── Drainer du relais ops ────────────────────────────────────────────────────────
+// Copie à la mise en service, puis toutes les OPS_DRAIN_INTERVAL_MS : les ops posées
+// pendant la coupure chez le relais (Neon, toujours allumé) entrent dans l'archive
+// SQLite et la place est libérée quand tous les appareils ont tiré (fraîcheur relais).
+setImmediate(() => {
+  drainRelayFromOps().catch((err) => console.error("[drainer] échec de démarrage :", err));
+});
+setInterval(() => {
+  drainRelayFromOps().catch((err) => console.error("[drainer] échec :", err));
+}, OPS_DRAIN_INTERVAL_MS).unref();

@@ -11,6 +11,7 @@ import {
   ONLINE_WINDOW_MS,
   manifests,
   projectById,
+  planNameForDevices,
 } from "../config.mjs";
 import {
   str,
@@ -554,19 +555,23 @@ router.post("/api/v1/admin/sms-payments/:id/process", requireAdmin, (req, res) =
 });
 
 // ── Suppression d'une caisse ──────────────────────────────────────────────────────
-// Tout ou rien : la fiche, ses paiements, ses ordres en attente et ses payloads de
-// sync. Un oubli ici laisserait une caisse fantôme qui ressurgirait dans les stats.
+// Tout ou rien : la fiche, ses paiements, ses ordres en attente, ses payloads de sync,
+// ses événements d'activité et de paiement. Un oubli ici laisserait une caisse fantôme
+// qui ressurgirait dans les stats — ou bloquerait la suppression : node:sqlite force
+// PRAGMA foreign_keys = ON, et activity_events / payment_events référencent shops(id).
 //
 // Si la caisse était la DERNIÈRE du compte marchand (plus aucune autre boutique ne
 // porte account_id = X), le compte devient orphelin : on le supprime complètement —
-// abonnement, demandes, ordres, références SMS. Une boutique qui se supprime elle-même
-// depuis l'app doit disparaître entièrement du tableau de bord (et du MRR), pas laisser
-// un fantôme qui continue de compter. Un compte avec plusieurs écrans, lui, survit :
-// les autres caisses le servent encore.
+// abonnement, demandes, ordres, références SMS, événements. Une boutique qui se supprime
+// elle-même depuis l'app doit disparaître entièrement du tableau de bord (et du MRR), pas
+// laisser un fantôme qui continue de compter. Un compte avec plusieurs écrans, lui,
+// survit : les autres caisses le servent encore.
 function deleteAccountCompletely(accountId) {
   db.prepare("DELETE FROM payments WHERE account_id = ?").run(accountId);
   db.prepare("DELETE FROM admin_commands WHERE account_id = ?").run(accountId);
   db.prepare("DELETE FROM subscription_requests WHERE account_id = ?").run(accountId);
+  db.prepare("DELETE FROM activity_events WHERE account_id = ?").run(accountId);
+  db.prepare("DELETE FROM payment_events WHERE account_id = ?").run(accountId);
   // Les lignes SMS gardent leur valeur de preuve mais perdent la référence au compte.
   db.prepare("UPDATE sms_payments SET matched_account_id = NULL WHERE matched_account_id = ?").run(accountId);
   db.prepare("DELETE FROM accounts WHERE id = ?").run(accountId);
@@ -581,6 +586,9 @@ export function deleteShop(deviceId) {
     db.prepare("DELETE FROM payments WHERE shop_id = ?").run(shop.id);
     db.prepare("DELETE FROM admin_commands WHERE device_id = ?").run(deviceId);
     db.prepare("DELETE FROM sync_payloads WHERE device_id = ?").run(deviceId);
+    db.prepare("DELETE FROM daily_stats WHERE device_id = ?").run(deviceId);
+    db.prepare("DELETE FROM activity_events WHERE shop_id = ?").run(shop.id);
+    db.prepare("DELETE FROM payment_events WHERE shop_id = ?").run(shop.id);
     db.prepare("DELETE FROM shops WHERE id = ?").run(shop.id);
     if (accountId) {
       const remaining = db.prepare("SELECT COUNT(*) AS c FROM shops WHERE account_id = ?").get(accountId).c;
@@ -594,6 +602,17 @@ export function deleteShop(deviceId) {
   return shop;
 }
 
+// Références FK sûres pour un `logActivity` passé APRÈS une suppression : la fiche et
+// son compte peuvent avoir disparu, et node:sqlite force PRAGMA foreign_keys = ON —
+// un identifiant pendouillant ferait échouer l'INSERT. On ne référence ce qui existe
+// encore (pour un écran multi-caisses, le compte survit ; la fiche, jamais).
+function aliveRefs(shopId, accountId) {
+  return {
+    shopId: shopId && db.prepare("SELECT id FROM shops WHERE id = ?").get(shopId) ? shopId : null,
+    accountId: accountId && accountById(accountId) ? accountId : null,
+  };
+}
+
 // Par l'administrateur (scope master, ou projet si la caisse y appartient).
 router.delete("/api/v1/admin/shops/:device_id", requireAdmin, (req, res) => {
   const device_id = str(req.params.device_id);
@@ -604,7 +623,8 @@ router.delete("/api/v1/admin/shops/:device_id", requireAdmin, (req, res) => {
     return res.status(403).json({ error: "Boutique hors de ce projet." });
   deleteShop(device_id);
   logAdminAction(req, "shop", shop.id, "delete", str(req.body?.reason));
-  logActivity("error", "shop", "Boutique supprimée", `"${shop.store_name}" (${device_id}) par ${session.scope}`, { device_id, reason: str(req.body?.reason) ?? null }, shop.id, shop.account_id);
+  const refs = aliveRefs(shop.id, shop.account_id);
+  logActivity("error", "shop", "Boutique supprimée", `"${shop.store_name}" (${device_id}) par ${session.scope}`, { device_id, reason: str(req.body?.reason) ?? null }, refs.shopId, refs.accountId);
   console.log(
     `[${new Date().toISOString()}] BOUTIQUE SUPPRIMÉE "${shop.store_name}" (${device_id}) par ${session.scope}`,
   );
@@ -627,6 +647,147 @@ router.delete("/api/v1/shops/:device_id", (req, res) => {
   res.json({ ok: true, device_id });
 });
 
+// ── Demandes de suppression soumises par les écrans employés ───────────────────────
+// Le vendeur cliquait « Supprimer mon compte » : on ne supprime RIEN d'office. Une
+// demande est déposée ici ; le propriétaire l'approuve (« Supprimer » à côté de la
+// demande dans le dashboard) ou la refuse. Même preuve d'identité que la suppression
+// directe : device_id + nom de boutique connus du serveur. Une nouvelle demande du
+// MÊME écran rend la précédente caduque ('superseded').
+router.post("/api/v1/shops/:device_id/delete-request", (req, res) => {
+  const device_id = str(req.params.device_id);
+  const store_name = str(req.body?.store_name);
+  const shop = byDeviceId(device_id);
+  if (!shop) return res.status(404).json({ error: "Boutique introuvable." });
+  if (!store_name || store_name !== shop.store_name)
+    return res.status(403).json({ error: "Le nom de la boutique ne correspond pas." });
+
+  const now = Date.now();
+  db.prepare(
+    "UPDATE delete_requests SET status = 'superseded', decided_at = ? WHERE device_id = ? AND status = 'pending'",
+  ).run(now, device_id);
+  const info = db.prepare(
+    "INSERT INTO delete_requests (device_id, store_name, reason, status, created_at) VALUES (?, ?, ?, 'pending', ?)",
+  ).run(device_id, shop.store_name, str(req.body?.reason), now);
+  logActivity(
+    "info",
+    "device",
+    "Demande de suppression d'un écran",
+    `"${shop.store_name}" (${device_id})`,
+    { device_id, delete_request_id: Number(info.lastInsertRowid) },
+    shop.id,
+    shop.account_id,
+  );
+  console.log(
+    `[${new Date().toISOString()}] DEMANDE DE SUPPRESSION déposée "${shop.store_name}" (${device_id}) par son écran`,
+  );
+  res.status(201).json({ ok: true, id: Number(info.lastInsertRowid) });
+});
+
+router.get("/api/v1/admin/delete-requests", requireAdmin, (req, res) => {
+  const session = sessionOf(req);
+  const status = str(req.query.status) || null;
+  const params = status ? [status] : [];
+  const rows = db
+    .prepare(
+      `SELECT dr.*,
+              s.owner_name AS owner_name,
+              s.app_origin AS origin,
+              s.account_id AS shop_account_id
+       FROM delete_requests dr
+       LEFT JOIN shops s ON s.device_id = dr.device_id
+       ${status ? "WHERE dr.status = ?" : ""}
+       ORDER BY dr.created_at DESC
+       LIMIT 200`,
+    )
+    .all(...params);
+  // Scope projet → les demandes de SES caisses uniquement.
+  const list = rows.filter(
+    (r) => session.scope !== "project" || r.origin === session.project,
+  );
+  res.json({ requests: list });
+});
+
+router.post("/api/v1/admin/delete-requests/:id/approve", requireAdmin, (req, res) => {
+  const requestId = Math.round(Number(req.params.id));
+  const row = db.prepare("SELECT * FROM delete_requests WHERE id = ?").get(requestId);
+  if (!row) return res.status(404).json({ error: "Demande introuvable." });
+  if (row.status !== "pending") return res.status(409).json({ error: "Demande déjà traitée." });
+  const session = sessionOf(req);
+  const shop = byDeviceId(row.device_id);
+  if (shop && session.scope === "project" && shop.app_origin !== session.project)
+    return res.status(403).json({ error: "Caisse hors de ce projet." });
+  if (!shop) return res.status(409).json({ error: "Cette caisse n'existe plus côté serveur." });
+
+  const now = Date.now();
+  // 1. Suppression serveur : la place qu'occupait l'écran se libère (le compte entier
+  //    disparaît si c'était le dernier écran — comportement existant de deleteShop).
+  const deleted = deleteShop(row.device_id);
+  // 2. Ordre à l'appareil (purge locale au consentement de l'employé au prochain
+  //    handshake). Inséré APRÈS deleteShop : la fiche a déjà disparu, il survit.
+  db.prepare(
+    "INSERT INTO admin_commands (id, device_id, account_id, action_type, payload, expires_at, created_at) VALUES (?, ?, NULL, 'delete_account_request', ?, ?, ?)",
+  ).run(
+    randomUUID(),
+    row.device_id,
+    JSON.stringify({ device_id: row.device_id, status: "approved", message: str(req.body?.message) || undefined }),
+    now + COMMAND_TTL_MS,
+    now,
+  );
+  const decidedBy = session.scope === "master" ? "master" : `projet:${session.project}`;
+  db.prepare(
+    "UPDATE delete_requests SET status = 'approved', decided_at = ?, decided_by = ? WHERE id = ?",
+  ).run(now, decidedBy, requestId);
+  logAdminAction(req, "request", String(requestId), "approve_delete", str(req.body?.reason));
+  const refs = aliveRefs(deleted?.id, deleted?.account_id);
+  logActivity(
+    "warn",
+    "device",
+    "Suppression approuvée",
+    `"${row.store_name}" (${row.device_id})`,
+    { device_id: row.device_id, delete_request_id: requestId },
+    refs.shopId,
+    refs.accountId,
+  );
+  res.json({ ok: true, device_id: row.device_id });
+});
+
+router.post("/api/v1/admin/delete-requests/:id/reject", requireAdmin, (req, res) => {
+  const requestId = Math.round(Number(req.params.id));
+  const row = db.prepare("SELECT * FROM delete_requests WHERE id = ?").get(requestId);
+  if (!row) return res.status(404).json({ error: "Demande introuvable." });
+  if (row.status !== "pending") return res.status(409).json({ error: "Demande déjà traitée." });
+  const session = sessionOf(req);
+  const shop = byDeviceId(row.device_id);
+  if (shop && session.scope === "project" && shop.app_origin !== session.project)
+    return res.status(403).json({ error: "Caisse hors de ce projet." });
+
+  const now = Date.now();
+  db.prepare(
+    "INSERT INTO admin_commands (id, device_id, account_id, action_type, payload, expires_at, created_at) VALUES (?, ?, NULL, 'delete_account_request', ?, ?, ?)",
+  ).run(
+    randomUUID(),
+    row.device_id,
+    JSON.stringify({ device_id: row.device_id, status: "rejected", message: str(req.body?.message) || undefined }),
+    now + COMMAND_TTL_MS,
+    now,
+  );
+  const decidedBy = session.scope === "master" ? "master" : `projet:${session.project}`;
+  db.prepare(
+    "UPDATE delete_requests SET status = 'rejected', decided_at = ?, decided_by = ? WHERE id = ?",
+  ).run(now, decidedBy, requestId);
+  logAdminAction(req, "request", String(requestId), "reject_delete", str(req.body?.reason));
+  logActivity(
+    "info",
+    "device",
+    "Suppression refusée",
+    `"${row.store_name}" (${row.device_id})`,
+    { device_id: row.device_id, delete_request_id: requestId },
+    shop?.id ?? null,
+    shop?.account_id ?? null,
+  );
+  res.json({ ok: true, device_id: row.device_id });
+});
+
 // ── Reset total de la base (Phase 1 — nettoyage complet) ───────────────────────────
 // POST /api/v1/admin/reset : supprime TOUTES les données (shops, accounts, payments,
 // admin_commands, sync_payloads, subscription_requests) et réinitialise les séquences.
@@ -645,6 +806,7 @@ router.post("/api/v1/admin/reset", requireAdmin, (req, res) => {
   try {
     db.prepare("DELETE FROM subscription_requests").run();
     db.prepare("DELETE FROM sync_payloads").run();
+    db.prepare("DELETE FROM daily_stats").run();
     db.prepare("DELETE FROM admin_commands").run();
     db.prepare("DELETE FROM payments").run();
     db.prepare("DELETE FROM shops").run();
@@ -683,6 +845,128 @@ router.get("/api/v1/admin/stats", requireAdmin, (req, res) => {
     project: origin,
     subscriptions: computeSubscriptions(accounts),
     ...aggregateStats(shops),
+  });
+});
+
+// ── Vue de bord « atterrissage » : boutiques + rentrée Elyndra ───────────────────
+// Toute la matière du dashboard d'accueil, agrégée en une seule réponse : les compteurs
+// de boutiques (actives, en ligne/hors ligne, suspendues, expirées) et — pour CHAQUE
+// caisse — son plan d'abonnement, ses écrans, son CA du mois réel (accumulé daily_stats)
+// et le revenu que sa souscription rapporte à Elyndra. Scopé au projet comme /admin/stats.
+router.get("/api/v1/admin/storefront", requireAdmin, (req, res) => {
+  const session = sessionOf(req);
+  const origin = session.scope === "project" ? session.project : str(req.query.project) || null;
+  const now = Date.now();
+  const shops = listShops(origin);
+  const accounts = db
+    .prepare("SELECT * FROM accounts WHERE merged_into IS NULL")
+    .all()
+    .filter((a) => accountOriginOk(a, origin));
+
+  // CA par caisse depuis l'historique quotidien (daily_stats), sur le mois civil en cours
+  // et sur 30 jours glissants. `day` étant le minuit local de l'appareil, la frontière du
+  // mois est calculée dans le fuseau du serveur — même zone que les caisses (UTC+1).
+  const deviceIds = shops.map((s) => s.device_id);
+  const sumByDevice = (since) => {
+    const m = new Map();
+    if (deviceIds.length === 0) return m;
+    for (const r of db
+      .prepare(
+        `SELECT device_id, SUM(revenue) AS rev FROM daily_stats
+         WHERE day >= ? AND device_id IN (${deviceIds.map(() => "?").join(",")})
+         GROUP BY device_id`,
+      )
+      .all(since, ...deviceIds)) {
+      m.set(r.device_id, Number(r.rev) || 0);
+    }
+    return m;
+  };
+  const monthStart = new Date(new Date(now).getFullYear(), new Date(now).getMonth(), 1).getTime(); // minuit local du 1er
+  const dayStart = new Date(now).setHours(0, 0, 0, 0);
+  const caMonth = sumByDevice(monthStart);
+  const ca30d = sumByDevice(now - 30 * DAY_MS);
+  const caToday = sumByDevice(dayStart);
+
+  const shopRows = shops.map((s) => {
+    const account = s.account_id ? accountById(s.account_id) : null;
+    const devices = account ? accountDevices(account.id) : null;
+    const overLimit = account ? deviceOverLimit(account, s.device_id) : false;
+    // Nom commercial dérivé du PALIER facturé (cf. PRICE_TIERS), pas du nombre d'écrans
+    // exact : un compte à 10 000 F/mois est « Essentiel » même avec 2 écrans inscrits.
+    const paid = account ? priceForDevices(account.max_devices) : null;
+    const tierAtPrice = PRICE_TIERS.find((t) => t.price === paid);
+    const plan = account
+      ? planNameForDevices(tierAtPrice ? tierAtPrice.devices : account.max_devices) ?? "Sur mesure"
+      : null;
+    return {
+      device_id: s.device_id,
+      store_name: s.store_name,
+      owner_name: s.owner_name,
+      phone: s.phone ?? null,
+      last_sync_at: s.last_sync_at ?? null,
+      online: !!(s.last_sync_at && now - s.last_sync_at < ONLINE_WINDOW_MS),
+      status: overLimit ? "over_limit" : account ? computeAccountStatus(account) : computeStatus(s),
+      account_id: account?.id ?? null,
+      account_name: account?.name ?? null,
+      // L'abonnement du compte : places achetées, écrans réellement inscrits et revenu
+      // mensuel que cette souscription rapporte à Elyndra.
+      plan_name: plan,
+      plan_price_fcfa: paid,
+      device_count: devices?.length ?? 1,
+      max_devices: account?.max_devices ?? 1,
+      over_limit: overLimit,
+      ca_today_fcfa: caToday.get(s.device_id) ?? 0,
+      ca_month_fcfa: caMonth.get(s.device_id) ?? 0,
+      ca_30d_fcfa: ca30d.get(s.device_id) ?? 0,
+      elyndra_month_fcfa: paid ?? 0,
+    };
+  });
+
+  // KPI boutiques — comptés PAR BOUTIQUE (une fiche de caisse = une boutique). « Rayées »
+  // = suspendues + expirées : celles qui ne peuvent plus encaisser. `employes` = écrans
+  // au-delà du fondateur (n-1 par compte multi-écrans).
+  const statusCount = { active: 0, grace: 0, suspended: 0, expired: 0 };
+  for (const r of shopRows) statusCount[r.status] = (statusCount[r.status] ?? 0) + 1;
+  let employes = 0;
+  for (const a of accounts) {
+    const n = accountDevices(a.id).length;
+    if (n > 1) employes += n - 1;
+  }
+  const enLigne = shopRows.filter((r) => r.online).length;
+  const kpi = {
+    boutique_total: shops.length,
+    boutique_active: statusCount.active,
+    en_ligne: enLigne,
+    hors_ligne: shops.length - enLigne,
+    en_grace: statusCount.grace,
+    suspendues: statusCount.suspended,
+    expirees: statusCount.expired,
+    employees: employes,
+  };
+
+  // Rentrée Elyndra. `mois_encaisse` = paiements reçus depuis le 1er du mois civil
+  // (même convention que l'overview existant : non scopés par projet — la table payments
+  // ne porte pas d'app_origin). `mrr` = ce que le portefeuille du périmètre rapporte
+  // chaque mois si tous les abonnements sont renouvelés.
+  const elyndraMois = db
+    .prepare("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= ?")
+    .get(monthStart).s;
+  const subs = computeSubscriptions(accounts);
+  const elyndra = {
+    mois_encaisse: elyndraMois,
+    ca_boutiques_mois: [...caMonth.values()].reduce((a, b) => a + b, 0),
+    mrr_fcfa: subs.mrr_fcfa,
+    arr_fcfa: subs.mrr_fcfa * 12,
+  };
+
+  res.json({
+    generated_at: now,
+    project: origin,
+    kpi,
+    elyndra,
+    shops: shopRows.sort(
+      (a, b) => b.ca_month_fcfa - a.ca_month_fcfa || a.store_name.localeCompare(b.store_name, "fr"),
+    ),
   });
 });
 

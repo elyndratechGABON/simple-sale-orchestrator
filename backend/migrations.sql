@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS payments (
 CREATE TABLE IF NOT EXISTS admin_commands (
   id            TEXT PRIMARY KEY,
   device_id     TEXT NOT NULL,
-  action_type   TEXT NOT NULL CHECK (action_type IN ('suspend', 'renew', 'broadcast_message')),
+  action_type   TEXT NOT NULL CHECK (action_type IN ('suspend', 'renew', 'broadcast_message', 'delete_account_request')),
   payload       TEXT NOT NULL,
   expires_at    INTEGER NOT NULL,
   delivered_at  INTEGER,
@@ -63,6 +63,22 @@ CREATE TABLE IF NOT EXISTS sync_payloads (
   received_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sync_payloads_device ON sync_payloads (device_id, received_at);
+
+-- Historique par jour du CA des caisses : reconstitué côté serveur à partir des fenêtres
+-- glissantes de 7 j (`by_day`) que les caisses déposent à chaque sync. Chaque sync
+-- ré-écrase la valeur du jour (idempotent) : sans rien demander de plus à l'app, le
+-- dashboard sait combien chaque boutique a fait ce mois-ci et sur 30 jours.
+-- `day` = minuit LOCAL de l'appareil, en ms — la même clé que `analytics.ts` côté caisse.
+CREATE TABLE IF NOT EXISTS daily_stats (
+  device_id  TEXT NOT NULL,
+  day        INTEGER NOT NULL,
+  revenue    INTEGER NOT NULL DEFAULT 0,
+  profit     INTEGER NOT NULL DEFAULT 0,
+  sales      INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (device_id, day)
+);
+CREATE INDEX IF NOT EXISTS idx_daily_stats_day ON daily_stats (day);
 
 -- Les projets : chaque projet a son propre dashboard dédié (connexion par mot de passe
 -- indépendant). `shops.app_origin` rattache chaque caisse à son projet. Le projet 'pos'
@@ -135,6 +151,29 @@ CREATE INDEX IF NOT EXISTS idx_subscription_requests_account
 CREATE INDEX IF NOT EXISTS idx_subscription_requests_pending
   ON subscription_requests (status, created_at);
 
+-- Demandes de suppression d'une caisse, déposées par l'EMPLOYÉ depuis son écran
+-- (Paramètres → Supprimer mon compte → envoyer la demande). Le propriétaire les voit
+-- dans le dashboard et tranche EN UN CLIC :
+--   - approuver  → la fiche serveur est supprimée (`deleteShop`) ET une commande
+--                  `delete_account_request` part à l'appareil (purge locale au
+--                  consentement de l'employé au prochain handshake) ;
+--   - refuser    → la commande `delete_account_request` part avec `status: rejected`,
+--                  l'appareil l'affiche et libère l'écran.
+-- Une nouvelle demande du MÊME appareil rend la précédente caduque ('superseded').
+CREATE TABLE IF NOT EXISTS delete_requests (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  device_id   TEXT NOT NULL,
+  store_name  TEXT NOT NULL DEFAULT '',
+  reason      TEXT NOT NULL DEFAULT '',
+  status      TEXT NOT NULL DEFAULT 'pending'
+              CHECK (status IN ('pending', 'approved', 'rejected', 'superseded')),
+  created_at  INTEGER NOT NULL,
+  decided_at  INTEGER,
+  decided_by  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_delete_requests_device ON delete_requests (device_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_delete_requests_pending ON delete_requests (status, created_at);
+
 -- ────────────────────────────────────────────────────────────────────────────────────
 -- Table des COMPTES marchands — les colonnes suivantes sont ajoutées en runtime par
 -- index.mjs (PRAGMA table_info) car SQLite ne connaît pas ADD COLUMN IF NOT EXISTS.
@@ -199,3 +238,20 @@ CREATE TABLE IF NOT EXISTS payment_events (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_events_ref ON payment_events (provider, reference);
 CREATE INDEX IF NOT EXISTS idx_payment_events_account ON payment_events (account_id, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_payment_events_status ON payment_events (status, received_at DESC);
+
+-- Archive des opérations du canal P2P, récupérées par le DRAINER depuis le relais ops
+-- (Neon) à chaque démarrage + périodiquement. L'orchestrateur COPE (jamais supprime) :
+-- la purge côté relais est, elle, régie par la fraîcheur des appareils (le relais ne
+-- libère la place que lorsque tous les appareils présents ont tiré les ops).
+CREATE TABLE IF NOT EXISTS sync_ops (
+  id         TEXT PRIMARY KEY,          -- `${shortDeviceId}:${seq}`, comme chez le relais
+  shop_id    TEXT NOT NULL,             -- groupe de partage (s_<hash>), opaque
+  device_id  TEXT NOT NULL,
+  seq        INTEGER NOT NULL,
+  type       TEXT NOT NULL,
+  entity_id  TEXT NOT NULL,
+  payload    TEXT NOT NULL,             -- JSON brut, jamais interprété
+  created_at INTEGER NOT NULL,
+  drained_at INTEGER NOT NULL           -- moment de la copie depuis le relais
+);
+CREATE INDEX IF NOT EXISTS idx_sync_ops_shop_drained ON sync_ops (shop_id, drained_at);

@@ -1,0 +1,14 @@
+{
+  "name": "ecaisse-ops-relay",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Relais d'échange d'opérations entre caisses ELYNDRA — base Neon (PostgreSQL). Boîte aux lettres muette, découplée de l'orchestrateur.",
+  "scripts": {
+    "start": "node index.mjs",
+    "schema": "node apply-schema.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  }
+}

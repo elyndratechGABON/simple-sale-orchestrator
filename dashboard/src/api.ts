@@ -136,6 +136,22 @@ export interface SubscriptionRequest {
   decided_by: string | null;
 }
 
+/** Demande de suppression d'une caisse, soumise par l'employé depuis son écran.
+ *  Le propriétaire l'approuve (« Supprimer ») ou la refuse dans la page Boutiques. */
+export interface DeleteRequest {
+  id: number;
+  device_id: string;
+  store_name: string;
+  reason: string;
+  status: "pending" | "approved" | "rejected" | "superseded";
+  created_at: number;
+  decided_at: number | null;
+  decided_by: string | null;
+  owner_name: string | null;
+  origin: string | null;
+  shop_account_id: number | null;
+}
+
 export interface BusinessTotals {
   revenue: number;
   profit: number;
@@ -226,6 +242,49 @@ export interface SmsPayment {
   matched_account_id: number | null;
   matched_tier_price: number | null;
   matched_account_name: string | null;
+}
+
+export interface StorefrontShop {
+  device_id: string;
+  store_name: string;
+  owner_name: string;
+  phone: string | null;
+  last_sync_at: number | null;
+  online: boolean;
+  status: string;
+  account_id: number | null;
+  account_name: string | null;
+  plan_name: string | null;
+  plan_price_fcfa: number | null;
+  device_count: number;
+  max_devices: number;
+  over_limit: boolean;
+  ca_today_fcfa: number;
+  ca_month_fcfa: number;
+  ca_30d_fcfa: number;
+  elyndra_month_fcfa: number;
+}
+
+export interface Storefront {
+  generated_at: number;
+  project: string | null;
+  kpi: {
+    boutique_total: number;
+    boutique_active: number;
+    en_ligne: number;
+    hors_ligne: number;
+    en_grace: number;
+    suspendues: number;
+    expirees: number;
+    employees: number;
+  };
+  elyndra: {
+    mois_encaisse: number;
+    ca_boutiques_mois: number;
+    mrr_fcfa: number;
+    arr_fcfa: number;
+  };
+  shops: StorefrontShop[];
 }
 
 export interface Overview {
@@ -548,6 +607,23 @@ export function rejectRequest(id: number): Promise<{ ok: boolean; request: Subsc
   return request(`/api/v1/admin/requests/${id}/reject`, { method: "POST" });
 }
 
+export function fetchDeleteRequests(
+  opts?: { status?: string; project?: string },
+): Promise<{ requests: DeleteRequest[] }> {
+  const qs = new URLSearchParams();
+  if (opts?.status) qs.set("status", opts.status);
+  if (opts?.project) qs.set("project", opts.project);
+  return request(`/api/v1/admin/delete-requests${qs.size ? `?${qs}` : ""}`);
+}
+
+export function approveDeleteRequest(id: number): Promise<{ ok: boolean; device_id: string }> {
+  return request(`/api/v1/admin/delete-requests/${id}/approve`, { method: "POST" });
+}
+
+export function rejectDeleteRequest(id: number): Promise<{ ok: boolean; device_id: string }> {
+  return request(`/api/v1/admin/delete-requests/${id}/reject`, { method: "POST" });
+}
+
 export function deleteShop(deviceId: string): Promise<{ ok: boolean; device_id: string }> {
   return request(`/api/v1/admin/shops/${encodeURIComponent(deviceId)}`, { method: "DELETE" });
 }
@@ -629,6 +705,10 @@ export function processSmsPayment(id: number, accountId: number): Promise<{ ok: 
 
 export function fetchOverview(project?: string): Promise<Overview> {
   return request(`/api/v1/admin/overview${project ? `?project=${encodeURIComponent(project)}` : ""}`);
+}
+
+export function fetchStorefront(project?: string): Promise<Storefront> {
+  return request(`/api/v1/admin/storefront${project ? `?project=${encodeURIComponent(project)}` : ""}`);
 }
 
 export function fetchClients(project?: string): Promise<{ clients: Client[] }> {

@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
-import { fetchShopsDetail, type ShopDetail } from "../api";
+import {
+  fetchShopsDetail,
+  fetchDeleteRequests,
+  approveDeleteRequest,
+  rejectDeleteRequest,
+  type ShopDetail,
+  type DeleteRequest,
+} from "../api";
 import { fmtDate, fmtDateTime, fmtFcfa, statusBadge } from "../utils";
 import { InboxIcon } from "../icons";
 import { DataTable } from "../components/ui/DataTable";
@@ -10,16 +17,23 @@ type Props = {
 
 export function Boutiques({ onSelect }: Props) {
   const [shops, setShops] = useState<ShopDetail[]>([]);
+  const [deletions, setDeletions] = useState<DeleteRequest[]>([]);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
     let alive = true;
     const load = async () => {
       try {
-        const res = await fetchShopsDetail();
+        const [shopRes, reqRes] = await Promise.all([
+          fetchShopsDetail(),
+          fetchDeleteRequests({ status: "pending" }),
+        ]);
         if (!alive) return;
-        setShops(res.shops);
+        setShops(shopRes.shops);
+        setDeletions(reqRes.requests);
         setReady(true);
         setError("");
       } catch {
@@ -31,9 +45,98 @@ export function Boutiques({ onSelect }: Props) {
     return () => { alive = false; clearInterval(t); };
   }, []);
 
+  const handleApprove = async (req: DeleteRequest) => {
+    setBusy(true);
+    try {
+      await approveDeleteRequest(req.id);
+      setNotice(`Suppression de « ${req.store_name} » approuv\u00e9e — la caisse est lib\u00e9r\u00e9e.`);
+      const [shopRes, reqRes] = await Promise.all([fetchShopsDetail(), fetchDeleteRequests({ status: "pending" })]);
+      setShops(shopRes.shops);
+      setDeletions(reqRes.requests);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erreur.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleReject = async (req: DeleteRequest) => {
+    setBusy(true);
+    try {
+      await rejectDeleteRequest(req.id);
+      setNotice(`Demande de suppression de « ${req.store_name} » refus\u00e9e.`);
+      const res = await fetchDeleteRequests({ status: "pending" });
+      setDeletions(res.requests);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erreur.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <>
-      {error && <div className="alert-banner">{error}</div>}
+      {error && (
+        <div className="alert-banner">
+          {error}
+          <button className="btn btn-ghost btn-sm" onClick={() => setError("")} style={{ marginLeft: "auto" }}>✕</button>
+        </div>
+      )}
+      {notice && (
+        <div className="alert-banner ok">
+          {notice}
+          <button className="btn btn-ghost btn-sm" onClick={() => setNotice("")} style={{ marginLeft: "auto" }}>✕</button>
+        </div>
+      )}
+
+      {deletions.length > 0 && (
+        <section className="acc-list" aria-label="Demandes de suppression">
+          {deletions.map((r) => (
+            <article className="acc" key={r.id}>
+              <header className="acc-head">
+                <span className="avatar" aria-hidden>
+                  {(r.store_name || "?").trim().charAt(0).toUpperCase()}
+                </span>
+                <div className="acc-id">
+                  <strong>{r.store_name || "Boutique"}</strong>
+                  <div className="meta">
+                    {r.owner_name}
+                    {r.reason ? ` \u00b7 « ${r.reason} »` : ""}
+                  </div>
+                </div>
+                <div className="acc-status">
+                  <span className="badge pending">Suppression demand\u00e9e</span>
+                </div>
+              </header>
+              <div className="acc-body">
+                <div className="history">
+                  <h3>L'employ\u00e9 veut partir \u2014 {fmtDateTime(r.created_at)}</h3>
+                  <div className="history-item">
+                    <span className="mono">{r.device_id}</span>
+                    <span className="muted">Appareil concern\u00e9</span>
+                  </div>
+                </div>
+                <div className="row-actions">
+                  <button
+                    className="btn btn-sm btn-danger"
+                    onClick={() => handleApprove(r)}
+                    disabled={busy}
+                  >
+                    Supprimer
+                  </button>
+                  <button
+                    className="btn btn-sm btn-danger-ghost"
+                    onClick={() => handleReject(r)}
+                    disabled={busy}
+                  >
+                    Refuser
+                  </button>
+                </div>
+              </div>
+            </article>
+          ))}
+        </section>
+      )}
 
       {!ready ? (
         <div className="table-wrap">
