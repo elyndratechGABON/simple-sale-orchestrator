@@ -18,19 +18,36 @@ import { handleRequest } from "../handler.mjs";
 
 export default async function handler(req, res) {
   const originalUrl = req.url ?? "/";
-  const pathname = originalUrl.split("?")[0];
+  const [pathname, rest] = originalUrl.split("?");
+  const qs = rest ? "?" + rest : "";
 
   let mapped;
-  if (pathname === "/api/ops/dashboard") {
-    mapped = "/api/v1/dashboard";
-  } else if (pathname === "/" || pathname === "/api/ops") {
-    mapped = "/api/v1/ops";
-  } else if (pathname.startsWith("/api/ops/")) {
-    mapped = "/api/v1" + pathname.slice("/api/ops".length);
-  } else {
-    res.status(404).json({ error: "introuvable" });
-    return;
+
+  // Déjà un chemin /api/v1/* — on le passe tel quel au handler
+  if (pathname.startsWith("/api/v1/")) {
+    mapped = pathname;
   }
-  req.url = mapped + (originalUrl.includes("?") ? "?" + originalUrl.split("?")[1] : "");
+  // Health check
+  else if (pathname === "/health") {
+    mapped = "/health";
+  }
+  // Dashboard : /api/ops/dashboard ou /dashboard
+  else if (pathname === "/api/ops/dashboard" || pathname === "/dashboard") {
+    mapped = "/api/v1/dashboard";
+  }
+  // Endpoint ops racine
+  else if (pathname === "/api/ops") {
+    mapped = "/api/v1/ops";
+  }
+  // Sous-chemins /api/ops/* → /api/v1/*
+  else if (pathname.startsWith("/api/ops/")) {
+    mapped = "/api/v1" + pathname.slice("/api/ops".length);
+  }
+  // Racine "/" ou inconnu — le handler décide (dashboard pour "/")
+  else {
+    mapped = pathname;
+  }
+
+  req.url = mapped + qs;
   await handleRequest(req, res);
 }

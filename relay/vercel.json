@@ -3,11 +3,10 @@
     "api/ops.js": { "maxDuration": 10 }
   },
   "rewrites": [
-    { "source": "/", "destination": "/api/ops/dashboard" },
-    { "source": "/dashboard", "destination": "/api/ops/dashboard" },
-    { "source": "/api/v1/ops", "destination": "/api/ops" },
-    { "source": "/api/v1/ops/purge", "destination": "/api/ops/purge" },
-    { "source": "/api/v1/ops/shops", "destination": "/api/ops/shops" },
-    { "source": "/api/v1/overview", "destination": "/api/ops/overview" }
+    { "source": "/", "destination": "/api/ops" },
+    { "source": "/health", "destination": "/api/ops" },
+    { "source": "/dashboard", "destination": "/api/ops" },
+    { "source": "/api/v1/:path+", "destination": "/api/ops" },
+    { "source": "/api/ops/:path+", "destination": "/api/ops" }
   ]
 }
