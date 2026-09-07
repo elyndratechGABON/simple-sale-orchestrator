@@ -1,5 +1,6 @@
 // Serveur HTTP autonome du relais ops — réutilise la logique de handler.mjs.
-// `npm start` → node index.mjs  (déploiement Node/Fly/Render/Railway/VPS)
+// Utile en dev local (`npm start`) ; en production le relais tourne sur Vercel
+// (serverless, voir api/ops.js) — la base Neon reste le seul stockage.
 import { createServer } from "node:http";
 import { handleRequest } from "./handler.mjs";
 

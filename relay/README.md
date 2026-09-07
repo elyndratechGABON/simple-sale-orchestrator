@@ -29,17 +29,16 @@ VITE_OPS_URL="https://votre-relais.example.com" npm run build:static
 - Le canal handshake/abonnements reste sur l'orchestrateur ; seul le canal ops
   (ventes/stocks/produits) part vers le relais Neon.
 
-## 3. Déployer sur Vercel **ou** tout hôte Node
+## 3. Déployer sur Vercel (serverless)
+Le relais est un service HTTP : la **base reste Neon** (réseau serveurless), on n'héberge
+rien d'autre — uniquement le petit serveur qui lit/écrit dedans.
 
-### Vercel (serverless)
-Déployer le dossier `relay/` comme projet Vercel :
 - `api/ops.js` devient `POST/GET /api/ops`.
 - Déclarer `DATABASE_URL` (chaîne Neon) dans les variables d'environnement.
 - La caisse pointe `VITE_OPS_URL="https://<projet>.vercel.app"`.
   Le relais accepte aussi `/api/v1/ops` (via vercel.json) ou directement `/api/ops`.
 
-### Node / Fly / Render / Railway
-À la racine du dossier `relay/` :
+En local (dev), un hôte Node suffit — plus besoin d'un VPS/Render en production :
 ```bash
 npm install
 DATABASE_URL="postgresql://…" PORT=8080 npm start
