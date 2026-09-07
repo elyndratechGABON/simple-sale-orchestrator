@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Relais d'échange d'opérations entre caisses ELYNDRA — base Neon (PostgreSQL). Boîte aux lettres muette, découplée de l'orchestrateur.",
   "scripts": {
-    "start": "node index.mjs",
+    "start": "node dev.mjs",
     "schema": "node apply-schema.mjs"
   },
   "dependencies": {
