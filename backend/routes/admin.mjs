@@ -44,6 +44,55 @@ import { logAdminAction, logActivity } from "./audit.mjs";
 
 const router = Router();
 
+// ── Vue structurée : toutes les boutiques + appareils par boutique ─────────────
+router.get("/api/v1/admin/shops", requireAdmin, (req, res) => {
+  const shops = listShops(req.query.origin as string | undefined);
+  const result = shops.map((s) => {
+    const account = s.account_id ? accountById(s.account_id) : null;
+    return {
+      id: s.id,
+      device_id: s.device_id,
+      store_name: s.store_name,
+      owner_name: s.owner_name,
+      account_id: s.account_id,
+      account_name: account?.name ?? null,
+      phone: s.phone,
+      location: s.location,
+      cluster: s.app_origin ?? "pos",
+      expiry_date: s.expiry_date,
+      suspended_at: s.suspended_at ?? null,
+      status: account ? computeAccountStatus(account) : (s.account_id ? "unknown" : "unlinked"),
+      over_limit: account ? deviceOverLimit(account, s.device_id) : false,
+      registered_at: s.registration_date,
+      last_sync_at: s.last_sync_at ?? null,
+      app_origin: s.app_origin ?? "pos",
+    };
+  });
+  res.json({ shops: result, total: result.length });
+});
+
+router.get("/api/v1/admin/shop/:id/devices", requireAdmin, (req, res) => {
+  const shopId = Number(req.params.id);
+  if (!Number.isFinite(shopId)) return res.status(400).json({ error: "id invalide" });
+  const shop = byId(shopId);
+  if (!shop) return res.status(404).json({ error: "Boutique inconnue." });
+  const devices = db.prepare("SELECT * FROM shops WHERE account_id = ? ORDER BY registration_date ASC").all(shop.account_id ?? 0);
+  const account = shop.account_id ? accountById(shop.account_id) : null;
+  res.json({
+    shop_id: shop.id,
+    store_name: shop.store_name,
+    account: account ? publicAccount(account) : null,
+    devices: devices.map((d) => ({
+      id: d.id,
+      device_id: d.device_id,
+      store_name: d.store_name,
+      registered_at: d.registration_date,
+      last_sync_at: d.last_sync_at ?? null,
+      status: d.expiry_date > Date.now() ? (d.suspended_at ? "suspended" : "active") : "expired",
+    })),
+  });
+});
+
 // ── Protocole v3 : commandes admin (boîte aux lettres) ────────────────────────────
 // Les ordres ciblent le COMPTE (account_id) ou, par compatibilité, un device_id dont on
 // remonte au compte. Suspendre, prolonger ou écrire touche TOUS les écrans du compte.
