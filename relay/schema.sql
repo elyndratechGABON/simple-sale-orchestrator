@@ -45,3 +45,20 @@ CREATE TABLE IF NOT EXISTS device_pull (
   PRIMARY KEY (shop_id, device_id)
 );
 CREATE INDEX IF NOT EXISTS idx_device_pull_shop ON device_pull (shop_id, last_pulled_at);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Invitations de partage : un appareil invité rejoint le groupe du propriétaire
+-- via un jeton opaque à usage unique (TTL court, émis par le relais). Le relais
+-- ne lit jamais les données du groupe — il stocke l'invitation et valide la
+-- réclamation. La bénédiction du compte reste du ressort de l'orchestrateur.
+CREATE TABLE IF NOT EXISTS share_tokens (
+  token        TEXT PRIMARY KEY,          -- jeton opaque, usage unique
+  shop_id      TEXT NOT NULL,             -- groupe de partage (s_<hash>)
+  account_name TEXT NOT NULL,             -- nom du COMPTE (dérivé de l'enseigne)
+  account_phone TEXT NOT NULL,            -- téléphone du compte (pour le handshake)
+  pair_code    TEXT NOT NULL,             -- le 6-char de preuve (généré par le principal)
+  created_at   BIGINT NOT NULL,
+  expires_at   BIGINT NOT NULL,           -- TTL court (≈10 min, aligné sur le code de paire)
+  used_by      TEXT,                      -- device_id ayant réclamé
+  used_at      BIGINT
+);

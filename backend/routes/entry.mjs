@@ -35,6 +35,10 @@ import {
   accountById,
   applyTierRenewal,
   tierForAmount,
+  deviceBlessing,
+  deviceBlessingByDevice,
+  deviceBlessingsForAccount,
+  upsertDeviceCredential,
 } from "../lib.mjs";
 import { broadcastStatus, broadcastRequest } from "./auth.mjs";
 import { parseSms } from "../sms-parser.mjs";
@@ -58,9 +62,10 @@ router.post("/api/v1/handshake", (req, res) => {
   //    de rattacher l'écran au compte de quelqu'un d'autre.
   const accPhone = normPhone(body.account_phone);
   const accPassword = str(body.account_password);
-  let account = null;
-  let accountCreated = false;
-  if (accPhone && accPassword) {
+   let account = null;
+   let accountCreated = false;
+   let pendingBlessing = false;
+   if (accPhone && accPassword) {
     const existing = accountByPhone(accPhone);
     if (!existing) {
       // Comptes créés hors ligne puis réconciliés ici : le premier écran à joindre le
@@ -125,6 +130,28 @@ router.post("/api/v1/handshake", (req, res) => {
     console.log(
       `[${new Date().toISOString()}] MOT CLÉ accepté : écran ${device_id} rattaché au compte « ${account.name} » (#${account.id})`,
     );
+  }
+
+  // 1 ter. Résolution par LIEN de partage (jeton relay + bénédiction propriétaire) :
+  // l'écran invité présente account_phone SANS mot de passe. S'il a déjà été
+  // bénédictionné, on authentifie et on génère un secret par-appareil. Sinon on
+  // marque le lien en attente (pending_blessing) — aucun compte hérité n'est créé.
+  if (!account && accPhone && !accPassword) {
+    const blessing = deviceBlessingByDevice(device_id);
+    if (blessing) {
+      const ownerAcc = accountById(blessing.account_id);
+      if (ownerAcc) {
+        account = resolveAccount(ownerAcc);
+        const secret = upsertDeviceCredential(device_id, account.id);
+        // les handshakes suivants s'authentifient via ce secret
+        pendingBlessing = false;
+        console.log(
+          `[${new Date().toISOString()}] LIEN accepté : écran ${device_id} rattaché au compte « ${account.name} » (#${account.id})`,
+        );
+      }
+    } else {
+      pendingBlessing = true;
+    }
   }
 
   // 2. Fiche boutique : mise à jour douce des champs fournis, création si inconnue
@@ -224,7 +251,9 @@ router.post("/api/v1/handshake", (req, res) => {
     shop = byId(shop.id);
   }
   if (!account) {
-    if (!shop.account_id || !accountById(shop.account_id)) {
+    if (pendingBlessing) {
+      // Pas de compte hérité : l'écran attend la bénédiction du propriétaire.
+    } else if (!shop.account_id || !accountById(shop.account_id)) {
       account = attachAccountForLegacy(shop);
     } else {
       account = accountById(shop.account_id);
@@ -232,23 +261,31 @@ router.post("/api/v1/handshake", (req, res) => {
   }
 
   // 3 bis. Convergence par nom d'enseigne : si d'autres comptes portent des boutiques
-  //    du même nom, tout le monde rejoint le compte le plus ancien — un seul
-  //    abonnement par enseigne, quota compté sur le survivant, écrans en trop coupés.
-  //    (Le démarrage fait la même passe pour toute la base ; ici on rattrape le cas
-  //    venant de naître, ex. deux téléphones différents pour la même boutique.)
-  const nameKey = normName(shop.store_name);
-  if (nameKey) {
-    const survivor = mergeGroupForKey(nameKey);
-    if (survivor && survivor.id !== shop.account_id) {
-      db.prepare("UPDATE shops SET account_id = ? WHERE id = ?").run(survivor.id, shop.id);
-    }
-    if (survivor) {
-      account = survivor;
-      shop = byId(shop.id);
-    }
-  }
+   // du même nom, tout le monde rejoint le compte le plus ancien — un seul
+   // abonnement par enseigne, quota compté sur le survivant, écrans en trop coupés.
+   // (Le démarrage fait la même passe pour toute la base ; ici on rattrape le cas
+   // venant de naître, ex. deux téléphones différents pour la même boutique.)
+   const nameKey = normName(shop.store_name);
+   if (nameKey) {
+     const survivor = mergeGroupForKey(nameKey);
+     if (survivor && survivor.id !== shop.account_id) {
+       db.prepare("UPDATE shops SET account_id = ? WHERE id = ?").run(survivor.id, shop.id);
+     }
+     if (survivor) {
+       account = survivor;
+       shop = byId(shop.id);
+     }
+   }
 
-  // 4. Accusé de réception implicite — mécanique v2 étendue aux commandes adressées au
+   // Si l'appareil est en attente de bénédiction : pas de compte, pas de
+   // création héritée — l'écran reste fonctionnel (données locales + pull
+   // du groupe) mais le handshake échoue avec pending_blessing jusqu'à
+   // ce que le propriétaire l'ait validé (POST /api/v1/account/bless).
+   if (pendingBlessing) {
+     return res.json({ status: "pending_blessing", pending_blessing: true, commands: [] });
+   }
+
+   // 4. Accusé de réception implicite — mécanique v2 étendue aux commandes adressées au
   //    compte : tout ce qui précède le dernier ordre appliqué est marqué livré.
   const lastId = str(body.last_applied_command_id);
   if (lastId) {
@@ -517,6 +554,30 @@ router.post("/api/v1/webhook/sms", (req, res) => {
     `[${new Date().toISOString()}] SMS #${paymentId} NON MATCHÉ (${errorReason}) — « ${parsed.name} » (${parsed.phone}) ${parsed.amount} F, TID ${parsed.tid}`,
   );
   return res.json({ ok: true, status: "unmatched", payment_id: paymentId, error: errorReason });
+});
+
+// ── Protocole : bénédiction d'un appareil invité ───────────────────────────
+// Le propriétaire authentifie sa caisse (téléphone + mot de passe du
+// compte) et désigne l'appareil cible (device_id de l'employé). Le serveur
+// rattache la fiche de l'employé au compte et la marque bénissionée.
+router.post("/api/v1/account/bless", (req, res) => {
+  const ownerPhone = normPhone(str(req.body?.account_phone));
+  const ownerPassword = str(req.body?.account_password);
+  const targetDeviceId = str(req.body?.target_device_id);
+  if (!ownerPhone || !ownerPassword || !targetDeviceId)
+    return res.status(400).json({ error: "account_phone, account_password, target_device_id requis." });
+  const existing = accountByPhone(ownerPhone);
+  if (!existing || existing.password !== ownerPassword)
+    return res.status(403).json({ error: "Identifiants du compte incorrects." });
+  const account = resolveAccount(existing);
+  if (!account) return res.status(404).json({ error: "Compte introuvable." });
+  // la caisse bénédictionne est déjà membre du compte (owner)
+  const ownerShop = byDeviceId(targetDeviceId);
+  // target_device_id doit être un appareil existant (l'employé a déjà fait un handshake)
+  if (!ownerShop) return res.status(404).json({ error: "Appareil cible inconnu — l'employé doit d'abord se présenter." });
+  deviceBlessing(targetDeviceId, account.id, ownerShop.device_id);
+  console.log(`[${new Date().toISOString()}] BÉNISSION : appareil ${targetDeviceId} → compte "${account.name}" (#${account.id}) par ${ownerShop.device_id}`);
+  res.json({ status: "blessed", account_id: account.id, account_name: account.name });
 });
 
 export default router;

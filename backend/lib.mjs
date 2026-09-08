@@ -238,6 +238,36 @@ export function resolveAccount(account) {
   return account ?? undefined;
 }
 
+/** Bénédiction d'un appareil sur un compte (le propriétaire approuve). */
+export function deviceBlessing(deviceId, accountId, blessedBy) {
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO device_blessings (device_id, account_id, blessed_at, blessed_by)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(device_id) DO UPDATE SET account_id = excluded.account_id, blessed_at = excluded.blessed_at, blessed_by = excluded.blessed_by`,
+  ).run(deviceId, accountId, now, blessedBy);
+}
+export function deviceBlessingByDevice(deviceId) {
+  return db.prepare("SELECT * FROM device_blessings WHERE device_id = ?").get(deviceId) ?? undefined;
+}
+export function deviceBlessingsForAccount(accountId) {
+  return db.prepare("SELECT * FROM device_blessings WHERE account_id = ?").all(accountId);
+}
+/** Crée ou renouvelle le secret par-appareil ; retourne le mot de passe généré. */
+export function upsertDeviceCredential(deviceId, accountId) {
+  const secret = randomBytes(16).toString("hex");
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO device_credentials (device_id, account_id, password, created_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(device_id) DO UPDATE SET account_id = excluded.account_id, password = excluded.password, created_at = excluded.created_at`,
+  ).run(deviceId, accountId, secret, now);
+  return secret;
+}
+export function deviceCredentialForDevice(deviceId) {
+  return db.prepare("SELECT * FROM device_credentials WHERE device_id = ?").get(deviceId) ?? undefined;
+}
+
 /** Comptes vivants possédant au moins une fiche au nom normalisé donné. */
 export function accountsForNameKey(key) {
   if (!key) return [];

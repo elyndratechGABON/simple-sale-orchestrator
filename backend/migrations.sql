@@ -255,3 +255,28 @@ CREATE TABLE IF NOT EXISTS sync_ops (
   drained_at INTEGER NOT NULL           -- moment de la copie depuis le relais
 );
 CREATE INDEX IF NOT EXISTS idx_sync_ops_shop_drained ON sync_ops (shop_id, drained_at);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Bénédiction d'appareil (invitation de partage) : un écran invité est
+-- rattaché au compte d'un propriétaire par l'appareil du propriétaire lui-même.
+-- L'écran invité n'a ni téléphone, ni mot de passe de compte ; il est béné-
+-- dictionary à chaque handshake tant que le propriétaire n'a pas validé.
+CREATE TABLE IF NOT EXISTS device_blessings (
+  device_id   TEXT NOT NULL,
+  account_id  INTEGER NOT NULL REFERENCES accounts(id),
+  blessed_at  INTEGER NOT NULL,
+  blessed_by  TEXT NOT NULL,   -- device_id du propriétaire qui a béni
+  PRIMARY KEY (device_id)
+);
+CREATE INDEX IF NOT EXISTS idx_blessings_account ON device_blessings (account_id);
+
+-- Secret par-appareil : le propriétaire génère un mot de passe unique pour
+-- chaque écran bénédictionné. L'écran s'authentifie ensuite avec ce secret
+-- aux handshakes suivants (au lieu du mot de passe du compte).
+CREATE TABLE IF NOT EXISTS device_credentials (
+  device_id    TEXT PRIMARY KEY,
+  account_id   INTEGER NOT NULL REFERENCES accounts(id),
+  password     TEXT NOT NULL,
+  created_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_device_credentials_account ON device_credentials (account_id);

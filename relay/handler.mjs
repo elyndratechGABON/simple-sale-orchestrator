@@ -344,10 +344,60 @@ export async function handleRequest(req, res) {
         return json(res, 200, await purgeOps(p, ids));
       }
 
-      case "/api/v1/ops/shops": {
+       case "/api/v1/ops/shops": {
         if (req.method !== "GET") return json(res, 405, { error: "méthode non autorisée" });
         if (!requireOpsToken(req, res)) return;
         return json(res, 200, { shops: await listShops(p) });
+      }
+
+      // ── Invitations de partage (usage unique, TTL court) ──
+      case "/api/v1/share/mint": {
+        if (req.method !== "POST") return json(res, 405, { error: "méthode non autorisée" });
+        if (!requireOpsToken(req, res)) return;
+        let body;
+        try { body = JSON.parse(await readBody(req)); }
+        catch { return json(res, 400, { error: "json invalide" }); }
+        const { shop_id, account_name, account_phone, pair_code } = body ?? {};
+        if (typeof shop_id !== "string" || !shop_id ||
+            typeof account_name !== "string" || !account_name ||
+            typeof account_phone !== "string" || !account_phone ||
+            typeof pair_code !== "string" || pair_code.length !== 6) {
+          return json(res, 400, { error: "champs invalides (shop_id, account_name, account_phone, pair_code 6 car.)" });
+        }
+        const token = crypto.randomUUID();
+        const ttl = Number(process.env.SHARE_TOKEN_TTL_MS ?? 10 * 60_000);
+        const now = Date.now();
+        await p.query(
+          `INSERT INTO share_tokens (token, shop_id, account_name, account_phone, pair_code, created_at, expires_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [token, shop_id, account_name, account_phone, pair_code.toUpperCase(), now, now + ttl],
+        );
+        return json(res, 200, { token, expires_at: now + ttl });
+      }
+      case "/api/v1/share/redeem": {
+        if (req.method !== "POST") return json(res, 405, { error: "méthode non autorisée" });
+        if (!requireOpsToken(req, res)) return;
+        let body;
+        try { body = JSON.parse(await readBody(req)); }
+        catch { return json(res, 400, { error: "json invalide" }); }
+        const token = body?.token;
+        const device_id = body?.device_id ?? "";
+        if (!token || typeof token !== "string") return json(res, 400, { error: "token requis" });
+        const now = Date.now();
+        const row = await p.query(
+          `SELECT * FROM share_tokens WHERE token = $1 FOR UPDATE`,
+          [token],
+        );
+        if (row.rowCount === 0) return json(res, 404, { error: "token introuvable" });
+        const t = row.rows[0];
+        if (t.used_at !== null || now > t.expires_at) return json(res, 410, { error: "token_invalid" });
+        await p.query(
+          `UPDATE share_tokens SET used_by = $1, used_at = $2 WHERE token = $3`,
+          [device_id, now, token],
+        );
+        // marquer l'appareil vivant dans le groupe
+        await recordPull(p, t.shop_id, device_id, []);
+        return json(res, 200, { shop_id: t.shop_id, account_name: t.account_name, account_phone: t.account_phone, pair_code: t.pair_code });
       }
 
       case "/api/v1/overview": {
