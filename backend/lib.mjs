@@ -9,7 +9,38 @@ import {
   DAY_MS,
   ONLINE_WINDOW_MS,
 } from "./config.mjs";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
+
+/** Hachage du mot de passe du compte (argon2 si disponible, sinon SHA-256 + sel).
+ *  Le mot de passe en clair ne quitte JAMAIS la base. */
+export function hashPassword(password) {
+  try {
+    const argon2 = require("argon2");
+    return argon2.hash(password, { type: argon2.argon2id, memoryCost: 2 ** 16, timeCost: 3, parallelism: 1 });
+  } catch {
+    const salt = randomBytes(16).toString("hex");
+    const digest = createHash("sha256").update(salt + password).digest("hex");
+    return `sha256$${salt}$${digest}`;
+  }
+}
+
+export function verifyPassword(password, stored) {
+  if (!stored) return false;
+  if (stored.startsWith("argon2$") || stored.startsWith("$argon2")) {
+    try {
+      const argon2 = require("argon2");
+      return argon2.verify(stored, password);
+    } catch {
+      return false;
+    }
+  }
+  if (stored.startsWith("sha256$")) {
+    const [, salt, digest] = stored.split("$");
+    const calc = createHash("sha256").update(salt + password).digest("hex");
+    return calc === digest;
+  }
+  return stored === password; // rétrocompat
+}
 
 // ── Requêtes ───────────────────────────────────────────────────────────────────────
 export const byId = (id) => db.prepare("SELECT * FROM shops WHERE id = ?").get(id);
@@ -434,7 +465,7 @@ export function createAccount({
       `INSERT INTO accounts (name, owner_name, phone, password, keyword, max_devices, expiry_date, suspended_at, created_at, updated_at)
        VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`,
     )
-    .run(name, owner_name, phone, password, max_devices, expiry_date, suspended_at, now, now);
+    .run(name, owner_name, phone, hashPassword(password), max_devices, expiry_date, suspended_at, now, now);
   const account = accountById(Number(info.lastInsertRowid));
   db.prepare("UPDATE accounts SET keyword = ?, updated_at = ? WHERE id = ?").run(
     generateKeyword(account),
