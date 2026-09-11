@@ -30,12 +30,12 @@ export function requireMaster(req, res, next) {
 // ── Connexion du dashboard ────────────────────────────────────────────────────────
 // Sans nom de projet → administrateur (scope master) ; avec un nom de projet → ce
 // dashboard dédié au projet (scope project, limité à ses caisses).
-router.post("/api/login", (req, res) => {
+router.post("/api/login", async (req, res) => {
   const project = str(req.body?.project);
   const password = str(req.body?.password);
   let session;
   if (project) {
-    const proj = projectById(project);
+    const proj = await projectById(project);
     if (!proj || password !== proj.password)
       return res.status(401).json({ error: "Projet ou mot de passe incorrect." });
     session = {
@@ -58,11 +58,11 @@ router.post("/api/login", (req, res) => {
   res.json({ token, scope: session.scope, project: session.project ?? null, name: session.name ?? null });
 });
 
-router.get("/api/config", (req, res) => {
+router.get("/api/config", async (req, res) => {
   // ?project=<id> → tarif/essai du projet (celui du manifest ou réglé par le master),
   // sinon les valeurs globales. Le dashboard s'en sert pour l'aperçu « montant → jours ».
   const project = str(req.query.project);
-  const cfg = projectConfig(project || null);
+  const cfg = await projectConfig(project || null);
   res.json({ price_per_month_fcfa: cfg.price_per_month_fcfa, trial_days: cfg.trial_days, project: project || null });
 });
 
@@ -95,10 +95,10 @@ router.get("/api/events", (req, res) => {
   req.on("close", () => sseClients.delete(client));
 });
 
-export function broadcastStatus(device_id, last_seen) {
-  const shop = byDeviceId(device_id);
+export async function broadcastStatus(device_id, last_seen) {
+  const shop = await byDeviceId(device_id);
   if (shop) {
-    logActivity("info", "sync", "Caisse synchronisée", `${shop.store_name} (${device_id})`, { device_id, last_seen }, shop.id, shop.account_id);
+    await logActivity("info", "sync", "Caisse synchronisée", `${shop.store_name} (${device_id})`, { device_id, last_seen }, shop.id, shop.account_id);
   }
   const payload = JSON.stringify({
     type: "status_update",
@@ -121,8 +121,8 @@ export function broadcastStatus(device_id, last_seen) {
  * Temps réel pour les DEMANDES d'abonnement : le tableau de bord voit la demande
  * arriver sans rafraîchir. Même découpage par projet que broadcastStatus.
  */
-export function broadcastRequest(request) {
-  const account = accountById(request.account_id);
+export async function broadcastRequest(request) {
+  const account = await accountById(request.account_id);
   if (!account) return;
   const payload = JSON.stringify({
     type: "request_created",
@@ -134,7 +134,7 @@ export function broadcastRequest(request) {
     created_at: request.created_at,
   });
   for (const c of sseClients) {
-    if (c.scope === "project" && !accountOriginOk(account, c.project)) continue;
+    if (c.scope === "project" && !(await accountOriginOk(account, c.project))) continue;
     try {
       c.res.write(`data: ${payload}\n\n`);
     } catch {

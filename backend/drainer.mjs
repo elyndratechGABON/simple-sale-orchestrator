@@ -86,35 +86,30 @@ async function pullShop(shopId) {
 }
 
 /** Copie idempotente dans l'archive locale. Renvoie le nombre de lignes NOUVELLES. */
-function archive(shopId, ops) {
+async function archive(shopId, ops) {
   const now = Date.now();
-  const insert = db.prepare(
-    `INSERT INTO sync_ops (id, shop_id, device_id, seq, type, entity_id, payload, created_at, drained_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT (id) DO NOTHING`,
-  );
   let inserted = 0;
-  db.exec("BEGIN");
-  try {
+  await db.tx(async (client) => {
     for (const op of ops) {
-      const res = insert.run(
-        String(op.id ?? ""),
-        shopId,
-        String(op.device_id ?? ""),
-        Number(op.seq ?? 0) || 0,
-        String(op.type ?? ""),
-        String(op.entity_id ?? ""),
-        JSON.stringify(op.payload ?? null),
-        Number(op.created_at ?? now) || now,
-        now,
+      const r = await client.query(
+        `INSERT INTO sync_ops (id, shop_id, device_id, seq, type, entity_id, payload, created_at, drained_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (id) DO NOTHING`,
+        [
+          String(op.id ?? ""),
+          shopId,
+          String(op.device_id ?? ""),
+          Number(op.seq ?? 0) || 0,
+          String(op.type ?? ""),
+          String(op.entity_id ?? ""),
+          JSON.stringify(op.payload ?? null),
+          Number(op.created_at ?? now) || now,
+          now,
+        ],
       );
-      inserted += res.changes;
+      inserted += r.rowCount ?? 0;
     }
-    db.exec("COMMIT");
-  } catch (err) {
-    db.exec("ROLLBACK");
-    throw err;
-  }
+  });
   return inserted;
 }
 

@@ -1,5 +1,6 @@
 // Helpers partagés — modèle multi-écrans (comptes), requêtes et utilitaires purs.
 // Aucune route ici ; chaque module de routes importe ce dont il a besoin.
+// Toutes les fonctions qui touchent la base sont désormais ASYNC (Postgres).
 import {
   db,
   PRICE_TIERS,
@@ -9,27 +10,30 @@ import {
   DAY_MS,
   ONLINE_WINDOW_MS,
 } from "./config.mjs";
-import { createHash, createHmac, randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 /** Hachage du mot de passe du compte (argon2 si disponible, sinon SHA-256 + sel).
  *  Le mot de passe en clair ne quitte JAMAIS la base. */
-export function hashPassword(password) {
+export async function hashPassword(password) {
   try {
-    const argon2 = require("argon2");
-    return argon2.hash(password, { type: argon2.argon2id, memoryCost: 2 ** 16, timeCost: 3, parallelism: 1 });
+    // eslint-disable-next-line no-undef
+    const argon2 = globalThis.process?.getBuiltinModule?.("argon2") ?? null;
+    if (argon2) return argon2.hash(password, { type: argon2.argon2id, memoryCost: 2 ** 16, timeCost: 3, parallelism: 1 });
   } catch {
-    const salt = randomBytes(16).toString("hex");
-    const digest = createHash("sha256").update(salt + password).digest("hex");
-    return `sha256$${salt}$${digest}`;
+    // pas d'argon2 → SHA-256 + sel ci-dessous
   }
+  const salt = randomBytes(16).toString("hex");
+  const digest = createHash("sha256").update(salt + password).digest("hex");
+  return `sha256$${salt}$${digest}`;
 }
 
 export function verifyPassword(password, stored) {
   if (!stored) return false;
   if (stored.startsWith("argon2$") || stored.startsWith("$argon2")) {
     try {
-      const argon2 = require("argon2");
-      return argon2.verify(stored, password);
+      // eslint-disable-next-line no-undef
+      const argon2 = globalThis.process?.getBuiltinModule?.("argon2") ?? null;
+      if (argon2) return argon2.verify(stored, password);
     } catch {
       return false;
     }
@@ -43,30 +47,29 @@ export function verifyPassword(password, stored) {
 }
 
 // ── Requêtes ───────────────────────────────────────────────────────────────────────
-export const byId = (id) => db.prepare("SELECT * FROM shops WHERE id = ?").get(id);
+export const byId = (id) => db.get("SELECT * FROM shops WHERE id = $1", id);
 export const byDeviceId = (deviceId) =>
-  db.prepare("SELECT * FROM shops WHERE device_id = ?").get(deviceId);
+  db.get("SELECT * FROM shops WHERE device_id = $1", deviceId);
 
 export const listShops = (origin) =>
-  db
-    .prepare(
-      `SELECT s.*,
-              (SELECT COUNT(*) FROM payments p WHERE p.shop_id = s.id) AS payments
-       FROM shops s ${origin ? "WHERE s.app_origin = ?" : ""} ORDER BY s.expiry_date ASC`,
-    )
-    .all(...(origin ? [origin] : []));
+  db.all(
+    `SELECT s.*,
+            (SELECT COUNT(*) FROM payments p WHERE p.shop_id = s.id) AS payments
+     FROM shops s ${origin ? "WHERE s.app_origin = $1" : ""} ORDER BY s.expiry_date ASC`,
+    ...(origin ? [origin] : []),
+  );
 
 // ── Comptes marchands ──────────────────────────────────────────────────────────────
-export const accountById = (id) => db.prepare("SELECT * FROM accounts WHERE id = ?").get(id);
+export const accountById = (id) => db.get("SELECT * FROM accounts WHERE id = $1", id);
 export const accountByPhone = (phone) =>
-  phone ? db.prepare("SELECT * FROM accounts WHERE phone = ?").get(phone) : undefined;
+  phone ? db.get("SELECT * FROM accounts WHERE phone = $1", phone) : undefined;
 
 /** Normalise un mot clé saisi : majuscules, chiffres, séparateurs (-/ espaces) ignorés. */
 export const normKeyword = (k) => str(k).toUpperCase().replace(/[^A-Z0-9]/g, "");
 
 /** Résolution par mot clé de récupération — la clé d'appairage d'un nouvel écran. */
 export const accountByKeyword = (keyword) =>
-  keyword ? db.prepare("SELECT * FROM accounts WHERE keyword = ?").get(normKeyword(keyword)) : undefined;
+  keyword ? db.get("SELECT * FROM accounts WHERE keyword = $1", normKeyword(keyword)) : undefined;
 
 const KEYWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -76,7 +79,7 @@ const KEYWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
  * aléatoire — un secret unique par compte, pas une valeur prévisible. Format
  * XXXX-XXXX sur un alphabet sans ambiguïté visuelle (ni 0/O, ni 1/I/L).
  */
-export function generateKeyword(account) {
+export async function generateKeyword(account) {
   for (let attempt = 0; attempt < 10; attempt++) {
     const salt = randomBytes(8).toString("hex");
     const digest = createHash("sha256")
@@ -89,14 +92,14 @@ export function generateKeyword(account) {
       key += KEYWORD_ALPHABET[parseInt(digest.slice(i * 2, i * 2 + 2), 16) % KEYWORD_ALPHABET.length];
     }
     const candidate = `${key.slice(0, 4)}-${key.slice(4)}`;
-    if (!accountByKeyword(candidate)) return candidate;
+    if (!(await accountByKeyword(candidate))) return candidate;
   }
   throw new Error("Impossible de générer un mot clé unique.");
 }
 
 /** Écrans du compte, du plus ancien au plus récent : l'ordre décide du quota. */
 export const accountDevices = (accountId) =>
-  db.prepare("SELECT * FROM shops WHERE account_id = ? ORDER BY registration_date ASC, id ASC").all(accountId);
+  db.all("SELECT * FROM shops WHERE account_id = $1 ORDER BY registration_date ASC, id ASC", accountId);
 
 export function computeAccountStatus(account) {
   if (!account) return "unknown";
@@ -109,7 +112,7 @@ export function computeAccountStatus(account) {
   return "expired";
 }
 
-export function publicAccount(account) {
+export async function publicAccount(account) {
   const now = Date.now();
   const status = computeAccountStatus(account);
   return {
@@ -118,7 +121,7 @@ export function publicAccount(account) {
     owner_name: account.owner_name,
     phone: account.phone ?? null,
     max_devices: account.max_devices,
-    device_count: accountDevices(account.id).length,
+    device_count: (await accountDevices(account.id)).length,
     subscription_end_date: account.expiry_date,
     suspended_at: account.suspended_at ?? null,
     // Grace period : si le compte est en grace, renvoyer la date de fin de grace
@@ -133,8 +136,8 @@ export function publicAccount(account) {
  * (suppression d'un écran) ou montée en palier. Recalculé à chaque lecture — aucun
  * état persistant à réparer quand un appareil disparaît.
  */
-export function deviceOverLimit(account, deviceId) {
-  const rows = accountDevices(account.id).map((s) => s.device_id);
+export async function deviceOverLimit(account, deviceId) {
+  const rows = (await accountDevices(account.id)).map((s) => s.device_id);
   const idx = rows.indexOf(deviceId);
   return idx >= account.max_devices;
 }
@@ -144,20 +147,24 @@ export function deviceOverLimit(account, deviceId) {
  * Tout le code existant (listes triées par échéance, statuts, routes legacy, vieux
  * builds) continue de lire la fiche boutique sans savoir que la vérité a déménagé.
  */
-export function syncShopsFromAccount(accountId) {
-  const account = accountById(accountId);
+export async function syncShopsFromAccount(accountId) {
+  const account = await accountById(accountId);
   if (!account) return;
-  db.prepare(
-    "UPDATE shops SET expiry_date = ?, suspended_at = ?, updated_at = ? WHERE account_id = ?",
-  ).run(account.expiry_date, account.suspended_at ?? null, Date.now(), accountId);
+  await db.run(
+    "UPDATE shops SET expiry_date = $1, suspended_at = $2, updated_at = $3 WHERE account_id = $4",
+    account.expiry_date,
+    account.suspended_at ?? null,
+    Date.now(),
+    accountId,
+  );
 }
 
 /** Le compte appartient-il au périmètre du scope (projet des sessions dashboard) ? */
 export function accountOriginOk(account, origin) {
-  if (!origin) return true;
-  return (
-    db.prepare("SELECT COUNT(*) AS c FROM shops WHERE account_id = ? AND app_origin = ?").get(account.id, origin).c > 0
-  );
+  if (!origin) return Promise.resolve(true);
+  return db
+    .get("SELECT COUNT(*) AS c FROM shops WHERE account_id = $1 AND app_origin = $2", account.id, origin)
+    .then((r) => r.c > 0);
 }
 
 /**
@@ -166,10 +173,10 @@ export function accountOriginOk(account, origin) {
  * du groupe = la plus lointaine, suspension seulement si TOUTES les fiches l'étaient.
  * Palier initial couvrant le nombre d'appareils du groupe : ne jamais bloquer l'existant.
  */
-export function migrateShopsToAccounts() {
-  const pending = db
-    .prepare("SELECT * FROM shops WHERE account_id IS NULL ORDER BY registration_date ASC")
-    .all();
+export async function migrateShopsToAccounts() {
+  const pending = await db.all(
+    "SELECT * FROM shops WHERE account_id IS NULL ORDER BY registration_date ASC",
+  );
   if (pending.length === 0) return;
   const groups = new Map(); // clé : téléphone normalisé, ou `solo:<id>` sans téléphone
   for (const shop of pending) {
@@ -180,11 +187,11 @@ export function migrateShopsToAccounts() {
   }
   for (const [key, shops] of groups) {
     const phone = key.startsWith("solo:") ? null : key;
-    const existing = resolveAccount(phone ? accountByPhone(phone) : null);
+    const existing = await resolveAccount(phone ? await accountByPhone(phone) : null);
     if (existing) {
       // Compte déjà créé pour ce téléphone plus tôt dans la boucle : simple rattachement.
       for (const s of shops)
-        db.prepare("UPDATE shops SET account_id = ? WHERE id = ?").run(existing.id, s.id);
+        await db.run("UPDATE shops SET account_id = $1 WHERE id = $2", existing.id, s.id);
       continue;
     }
     const expiry = Math.max(...shops.map((s) => s.expiry_date));
@@ -192,7 +199,7 @@ export function migrateShopsToAccounts() {
     const suspendedAt = allSuspended ? Math.min(...shops.map((s) => s.suspended_at)) : null;
     const tier = tierCoveringDevices(shops.length);
     const first = shops[0];
-    const account = createAccount({
+    const account = await createAccount({
       name: first.store_name || "Boutique",
       owner_name: first.owner_name ?? "",
       phone,
@@ -203,10 +210,12 @@ export function migrateShopsToAccounts() {
     });
     const ids = shops.map((s) => s.id);
     for (const id of ids)
-      db.prepare("UPDATE shops SET account_id = ? WHERE id = ?").run(account.id, id);
-    db.prepare(
-      `UPDATE payments SET account_id = ? WHERE shop_id IN (${ids.map(() => "?").join(",")}) AND account_id IS NULL`,
-    ).run(account.id, ...ids);
+      await db.run("UPDATE shops SET account_id = $1 WHERE id = $2", account.id, id);
+    await db.run(
+      `UPDATE payments SET account_id = $1 WHERE shop_id IN (${ids.map((_, i) => "$" + (i + 2)).join(",")}) AND account_id IS NULL`,
+      account.id,
+      ...ids,
+    );
     console.log(
       `[migration] compte #${account.id} « ${account.name} » (${phone ?? "sans téléphone"}) ← ${shops.length} boutique(s), palier ${account.max_devices}`,
     );
@@ -218,17 +227,17 @@ export function migrateShopsToAccounts() {
  * Rattrapage legacy : une fiche créée par une vieille route (/api/shops) ou un handshake
  * sans identifiants reçoit un compte individuel — aucun écran ne reste orphelin.
  */
-export function attachAccountForLegacy(shop) {
-  if (shop.account_id && accountById(shop.account_id)) return shop;
+export async function attachAccountForLegacy(shop) {
+  if (shop.account_id && (await accountById(shop.account_id))) return shop;
   const phone = normPhone(shop.phone ?? "");
-  let account = resolveAccount(phone ? accountByPhone(phone) : null);
+  let account = await resolveAccount(phone ? await accountByPhone(phone) : null);
   // Regroupement par nom d'enseigne : sans identifiants présentés, une fiche rejoint
   // quand même le compte qui porte déjà ce nom de boutique — pas de compte individuel
   // par écran pour la même enseigne.
-  if (!account) account = mergeGroupForKey(normName(shop.store_name));
+  if (!account) account = await mergeGroupForKey(normName(shop.store_name));
   if (!account) {
     const tier = tierCoveringDevices(1);
-    account = createAccount({
+    account = await createAccount({
       name: shop.store_name || "Boutique",
       owner_name: shop.owner_name ?? "",
       phone: phone || null,
@@ -238,7 +247,7 @@ export function attachAccountForLegacy(shop) {
       suspended_at: shop.suspended_at ?? null,
     });
   }
-  db.prepare("UPDATE shops SET account_id = ? WHERE id = ?").run(account.id, shop.id);
+  await db.run("UPDATE shops SET account_id = $1 WHERE id = $2", account.id, shop.id);
   return byId(shop.id);
 }
 
@@ -254,81 +263,75 @@ export function attachAccountForLegacy(shop) {
 
 /** Comptes non absorbés (les redirections ne sont ni listées ni administrables). */
 export const activeAccounts = () =>
-  db.prepare("SELECT * FROM accounts WHERE merged_into IS NULL").all();
+  db.all("SELECT * FROM accounts WHERE merged_into IS NULL");
 
 /**
  * Suit les redirections merged_into jusqu'au compte vivant. Garde-fou anti-cycle :
  * une chaîne bouclée s'arrête au premier élément déjà visité.
  */
-export function resolveAccount(account) {
+export async function resolveAccount(account) {
   const seen = new Set();
   while (account?.merged_into && !seen.has(account.id)) {
     seen.add(account.id);
-    account = accountById(account.merged_into);
+    account = await accountById(account.merged_into);
   }
   return account ?? undefined;
 }
 
 /** Bénédiction d'un appareil sur un compte (le propriétaire approuve). */
-export function deviceBlessing(deviceId, accountId, blessedBy) {
-  const now = Date.now();
-  db.prepare(
+export const deviceBlessing = (deviceId, accountId, blessedBy) =>
+  db.run(
     `INSERT INTO device_blessings (device_id, account_id, blessed_at, blessed_by)
-     VALUES (?, ?, ?, ?)
+     VALUES ($1, $2, $3, $4)
      ON CONFLICT(device_id) DO UPDATE SET account_id = excluded.account_id, blessed_at = excluded.blessed_at, blessed_by = excluded.blessed_by`,
-  ).run(deviceId, accountId, now, blessedBy);
-}
-export function deviceBlessingByDevice(deviceId) {
-  return db.prepare("SELECT * FROM device_blessings WHERE device_id = ?").get(deviceId) ?? undefined;
-}
-export function deviceBlessingsForAccount(accountId) {
-  return db.prepare("SELECT * FROM device_blessings WHERE account_id = ?").all(accountId);
-}
+    deviceId,
+    accountId,
+    Date.now(),
+    blessedBy,
+  );
+export const deviceBlessingByDevice = (deviceId) =>
+  db.get("SELECT * FROM device_blessings WHERE device_id = $1", deviceId);
+export const deviceBlessingsForAccount = (accountId) =>
+  db.all("SELECT * FROM device_blessings WHERE account_id = $1", accountId);
 /** Crée ou renouvelle le secret par-appareil ; retourne le mot de passe généré. */
-export function upsertDeviceCredential(deviceId, accountId) {
+export async function upsertDeviceCredential(deviceId, accountId) {
   const secret = randomBytes(16).toString("hex");
   const now = Date.now();
-  db.prepare(
+  await db.run(
     `INSERT INTO device_credentials (device_id, account_id, password, created_at)
-     VALUES (?, ?, ?, ?)
+     VALUES ($1, $2, $3, $4)
      ON CONFLICT(device_id) DO UPDATE SET account_id = excluded.account_id, password = excluded.password, created_at = excluded.created_at`,
-  ).run(deviceId, accountId, secret, now);
+    deviceId,
+    accountId,
+    secret,
+    now,
+  );
   return secret;
 }
-export function deviceCredentialForDevice(deviceId) {
-  return db.prepare("SELECT * FROM device_credentials WHERE device_id = ?").get(deviceId) ?? undefined;
-}
+export const deviceCredentialForDevice = (deviceId) =>
+  db.get("SELECT * FROM device_credentials WHERE device_id = $1", deviceId);
 
 /** Comptes vivants possédant au moins une fiche au nom normalisé donné. */
-export function accountsForNameKey(key) {
+export async function accountsForNameKey(key) {
   if (!key) return [];
+  const rows = await db.all("SELECT account_id, store_name FROM shops WHERE account_id IS NOT NULL");
   const ids = new Set();
-  for (const s of db.prepare("SELECT account_id, store_name FROM shops WHERE account_id IS NOT NULL").all()) {
+  for (const s of rows) {
     if (normName(s.store_name) === key) ids.add(s.account_id);
   }
-  return [...ids].map(accountById).filter((a) => a && !a.merged_into);
+  const accounts = await Promise.all([...ids].map(accountById));
+  return accounts.filter((a) => a && !a.merged_into);
 }
 
-export function mergeAccountInto(merged, survivor) {
+export async function mergeAccountInto(merged, survivor) {
   const now = Date.now();
-  db.prepare("UPDATE shops SET account_id = ?, updated_at = ? WHERE account_id = ?").run(
-    survivor.id,
-    now,
-    merged.id,
-  );
-  db.prepare("UPDATE payments SET account_id = ? WHERE account_id = ?").run(survivor.id, merged.id);
+  await db.run("UPDATE shops SET account_id = $1, updated_at = $2 WHERE account_id = $3", survivor.id, now, merged.id);
+  await db.run("UPDATE payments SET account_id = $1 WHERE account_id = $2", survivor.id, merged.id);
   // L'historique suit : commandes livrées comme en attente passent au survivant — une
   // suspension visant l'absorbé vise dès lors la même enseigne réunifiée.
-  db.prepare("UPDATE admin_commands SET account_id = ? WHERE account_id = ?").run(
-    survivor.id,
-    merged.id,
-  );
-  db.prepare("UPDATE accounts SET merged_into = ?, updated_at = ? WHERE id = ?").run(
-    survivor.id,
-    now,
-    merged.id,
-  );
-  syncShopsFromAccount(survivor.id);
+  await db.run("UPDATE admin_commands SET account_id = $1 WHERE account_id = $2", survivor.id, merged.id);
+  await db.run("UPDATE accounts SET merged_into = $1, updated_at = $2 WHERE id = $3", survivor.id, now, merged.id);
+  await syncShopsFromAccount(survivor.id);
   console.log(
     `[fusion] compte « ${merged.name} » (#${merged.id}) → « ${survivor.name} » (#${survivor.id}) : même enseigne, un seul abonnement.`,
   );
@@ -344,33 +347,31 @@ export function mergeAccountInto(merged, survivor) {
  * de quota : fusionner deux paliers de 2 places n'en donne pas 4 — c'est même le but,
  * les écrans au-delà du palier survivant sont coupés.
  */
-export function mergeGroupForKey(key) {
-  const group = accountsForNameKey(key);
+export async function mergeGroupForKey(key) {
+  const group = await accountsForNameKey(key);
   if (group.length === 0) return null;
   if (group.length === 1) return group[0];
-  const paymentCount = (accountId) =>
-    db.prepare("SELECT COUNT(*) AS c FROM payments WHERE account_id = ?").get(accountId).c;
-  const ranked = [...group].sort(
-    (x, y) =>
-      paymentCount(y.id) - paymentCount(x.id) ||
-      y.expiry_date - x.expiry_date ||
-      x.id - y.id,
+  const paymentCount = async (accountId) =>
+    (await db.get("SELECT COUNT(*) AS c FROM payments WHERE account_id = $1", accountId)).c;
+  const ranked = await Promise.all(
+    group.map(async (x) => ({ x, payments: await paymentCount(x.id) })),
   );
-  const survivor = ranked[0];
-  for (const a of ranked.slice(1)) mergeAccountInto(a, survivor);
+  ranked.sort(
+    (a, b) =>
+      b.payments - a.payments ||
+      b.x.expiry_date - a.x.expiry_date ||
+      a.x.id - b.x.id,
+  );
+  const survivor = ranked[0].x;
+  for (const { x } of ranked.slice(1)) await mergeAccountInto(x, survivor);
   return survivor;
 }
 
 /** Passe de démarrage : converge toutes les enseignes dupliquées (idempotent). */
-export function mergeAccountsByName() {
-  const keys = new Set(
-    db
-      .prepare("SELECT store_name FROM shops WHERE account_id IS NOT NULL")
-      .all()
-      .map((r) => normName(r.store_name))
-      .filter(Boolean),
-  );
-  for (const key of keys) mergeGroupForKey(key);
+export async function mergeAccountsByName() {
+  const rows = await db.all("SELECT store_name FROM shops WHERE account_id IS NOT NULL");
+  const keys = new Set(rows.map((r) => normName(r.store_name)).filter(Boolean));
+  for (const key of keys) await mergeGroupForKey(key);
 }
 
 export function computeStatus(shop) {
@@ -450,7 +451,7 @@ export function priceForDevices(devices) {
 
 /** Création d'un compte ; renvoie la ligne insérée. Le mot clé de récupération est
  *  généré une fois pour toutes, dérivé de la fiche (combo aléatoire des infos). */
-export function createAccount({
+export async function createAccount({
   name,
   owner_name = "",
   phone = null,
@@ -460,19 +461,23 @@ export function createAccount({
   suspended_at = null,
 }) {
   const now = Date.now();
-  const info = db
-    .prepare(
-      `INSERT INTO accounts (name, owner_name, phone, password, keyword, max_devices, expiry_date, suspended_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`,
-    )
-    .run(name, owner_name, phone, hashPassword(password), max_devices, expiry_date, suspended_at, now, now);
-  const account = accountById(Number(info.lastInsertRowid));
-  db.prepare("UPDATE accounts SET keyword = ?, updated_at = ? WHERE id = ?").run(
-    generateKeyword(account),
+  const info = await db.get(
+    `INSERT INTO accounts (name, owner_name, phone, password, keyword, max_devices, expiry_date, suspended_at, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, $8, $9)
+     RETURNING id`,
+    name,
+    owner_name,
+    phone,
+    await hashPassword(password),
+    max_devices,
+    expiry_date,
+    suspended_at,
     now,
-    account.id,
+    now,
   );
-  return accountById(Number(info.lastInsertRowid));
+  const account = await accountById(Number(info.id));
+  await db.run("UPDATE accounts SET keyword = $1, updated_at = $2 WHERE id = $3", await generateKeyword(account), now, account.id);
+  return accountById(Number(info.id));
 }
 
 /**
@@ -482,32 +487,40 @@ export function createAccount({
  * demande d'abonnement — un seul code, donc un seul comportement de facturation.
  * Renvoie { days, tier, new_end_date } ou null si le montant ne couvre aucun palier.
  */
-export function applyTierRenewal(account, amountFcfa, now) {
+export async function applyTierRenewal(account, amountFcfa, now) {
   const tier = tierForAmount(amountFcfa);
   if (!tier) return null;
   const days = Math.max(1, Math.round((amountFcfa / tier.price) * 30));
   const new_end_date = Math.max(now, account.expiry_date) + days * DAY_MS;
-  db.prepare(
-    "UPDATE accounts SET suspended_at = NULL, expiry_date = ?, max_devices = ?, updated_at = ? WHERE id = ?",
-  ).run(new_end_date, tier.devices, now, account.id);
-  syncShopsFromAccount(account.id);
+  await db.run(
+    "UPDATE accounts SET suspended_at = NULL, expiry_date = $1, max_devices = $2, updated_at = $3 WHERE id = $4",
+    new_end_date,
+    tier.devices,
+    now,
+    account.id,
+  );
+  await syncShopsFromAccount(account.id);
   // Paiement rattaché au compte ; la colonne shop_id (NOT NULL, FK vers shops) porte
   // l'écran fondateur du compte — cf. commande « renew » pour le même choix.
-  const anchor = db
-    .prepare(
-      "SELECT id FROM shops WHERE account_id = ? ORDER BY registration_date ASC, id ASC LIMIT 1",
-    )
-    .get(account.id);
+  const anchor = await db.get(
+    "SELECT id FROM shops WHERE account_id = $1 ORDER BY registration_date ASC, id ASC LIMIT 1",
+    account.id,
+  );
   if (anchor) {
-    db.prepare(
-      "INSERT INTO payments (shop_id, account_id, amount, days_added, created_at) VALUES (?, ?, ?, ?, ?)",
-    ).run(anchor.id, account.id, amountFcfa, days, now);
+    await db.run(
+      "INSERT INTO payments (shop_id, account_id, amount, days_added, created_at) VALUES ($1, $2, $3, $4, $5)",
+      anchor.id,
+      account.id,
+      amountFcfa,
+      days,
+      now,
+    );
   }
   return { days, tier, new_end_date };
 }
 
 /** Upsert d'une boutique — partagé par l'inscription legacy et le handshake. */
-export function upsertShop(body) {
+export async function upsertShop(body) {
   const device_id = str(body.device_id);
   const store_name = str(body.store_name);
   if (!device_id || !store_name)
@@ -522,21 +535,29 @@ export function upsertShop(body) {
       ? body.registered_at
       : Date.now();
   const now = Date.now();
-  const existing = byDeviceId(device_id);
+  const existing = await byDeviceId(device_id);
   if (existing) {
-    db.prepare(
+    await db.run(
       `UPDATE shops
-       SET owner_name = ?, store_name = ?, phone = ?, location = ?,
-           app_version_used = COALESCE(?, app_version_used),
-           device_fingerprint = COALESCE(?, device_fingerprint),
-           updated_at = ?
-       WHERE id = ?`,
-    ).run(owner_name, store_name, phone, location, app_version_used, device_fingerprint, now, existing.id);
-    return { shop: byId(existing.id), status: 200 };
+       SET owner_name = $1, store_name = $2, phone = $3, location = $4,
+           app_version_used = COALESCE($5, app_version_used),
+           device_fingerprint = COALESCE($6, device_fingerprint),
+           updated_at = $7
+       WHERE id = $8`,
+      owner_name,
+      store_name,
+      phone,
+      location,
+      app_version_used,
+      device_fingerprint,
+      now,
+      existing.id,
+    );
+    return { shop: await byId(existing.id), status: 200 };
   }
   // Nouvelle boutique : vérifier l'unicité de l'empreinte numérique.
   if (device_fingerprint) {
-    const clash = db.prepare("SELECT device_id, store_name FROM shops WHERE device_fingerprint = ?").get(device_fingerprint);
+    const clash = await db.get("SELECT device_id, store_name FROM shops WHERE device_fingerprint = $1", device_fingerprint);
     if (clash) {
       return {
         error: `Cet appareil est déjà enregistré sous la boutique « ${clash.store_name} » (${clash.device_id}). Un seul appareil physique par boutique.`,
@@ -546,12 +567,11 @@ export function upsertShop(body) {
       };
     }
   }
-  db.prepare(
+  await db.run(
     `INSERT INTO shops
        (device_id, owner_name, store_name, phone, location, registration_date,
         expiry_date, created_at, updated_at, app_version_used, device_fingerprint)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
     device_id,
     owner_name,
     store_name,
@@ -564,7 +584,7 @@ export function upsertShop(body) {
     app_version_used,
     device_fingerprint,
   );
-  return { shop: byDeviceId(device_id), status: 200 };
+  return { shop: await byDeviceId(device_id), status: 200 };
 }
 
 // ── Protocole v2 : stats réelles par projet (agrégées depuis sync_payloads) ───────
@@ -572,21 +592,20 @@ export function upsertShop(body) {
 // envoie une fenêtre glissante de 7 j déjà cumulée : on ne retient donc que le DERNIER
 // payload par caisse, puis on somme les totaux du projet. Top produits agrégés par nom.
 // Jamais le brut : uniquement des totaux et des top produits.
-export function aggregateStats(shops) {
+export async function aggregateStats(shops) {
   const zero = { revenue: 0, profit: 0, sales: 0, items: 0, customers: 0 };
   if (shops.length === 0)
     return { generated_at: null, totals: zero, top_products: [], by_day: [], shops: [] };
 
   const ids = shops.map((s) => s.device_id);
-  const rows = db
-    .prepare(
-      `SELECT sp.device_id, sp.payload, sp.received_at
-       FROM sync_payloads sp
-       JOIN (SELECT device_id, MAX(received_at) AS m FROM sync_payloads GROUP BY device_id) t
-         ON sp.device_id = t.device_id AND sp.received_at = t.m
-       WHERE sp.device_id IN (${ids.map(() => "?").join(",")})`,
-    )
-    .all(...ids);
+  const rows = await db.all(
+    `SELECT sp.device_id, sp.payload, sp.received_at
+     FROM sync_payloads sp
+     JOIN (SELECT device_id, MAX(received_at) AS m FROM sync_payloads GROUP BY device_id) t
+       ON sp.device_id = t.device_id AND sp.received_at = t.m
+     WHERE sp.device_id IN (${ids.map((_, i) => "$" + (i + 1)).join(",")})`,
+    ...ids,
+  );
 
   const byDevice = new Map();
   for (const row of rows) {
@@ -653,7 +672,7 @@ export function aggregateStats(shops) {
 // Comptée au niveau COMPTE : un abonnement couvre plusieurs écrans, compter les fiches
 // gonflerait le MRR d'autant. MRR = somme du tarif du palier des comptes ACTIFS + EN GRACE.
 // Un compte est « expirant » quand son échéance est sous 7 ou 30 jours.
-export function computeSubscriptions(accounts) {
+export async function computeSubscriptions(accounts) {
   const now = Date.now();
   const s = {
     total: accounts.length,
@@ -673,7 +692,8 @@ export function computeSubscriptions(accounts) {
     else if (st === "grace") s.grace++;
     else if (st === "suspended") s.suspended++;
     else if (st === "expired") s.expired++;
-    if (accountDevices(account.id).some((d) => d.last_sync_at && now - d.last_sync_at < ONLINE_WINDOW_MS))
+    const devices = await accountDevices(account.id);
+    if (devices.some((d) => d.last_sync_at && now - d.last_sync_at < ONLINE_WINDOW_MS))
       s.online++;
     // MRR : les comptes actifs ET en grace comptent (ils sont encore payants).
     if (st === "active" || st === "grace") {

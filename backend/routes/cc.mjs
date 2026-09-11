@@ -1,5 +1,6 @@
 // Routes du Control Center Elyndra — vues globales : overview, clients, boutiques,
 // appareils, sync, activité, audit, paiements, actions sur clients/abonnements.
+// Tout est ASYNC (Postgres, facette db de config.mjs).
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import {
@@ -43,35 +44,36 @@ const router = Router();
 // ── Vue globale (vue globale du Control Center) ────────────────────────────────────
 // Agrège en une seule réponse : KPI business (revenu Elyndra vs CA boutique), état système,
 // projets. Distinct des routes existantes — ne casse aucune vue dashboard existante.
-router.get("/api/v1/admin/overview", requireAdmin, (req, res) => {
+router.get("/api/v1/admin/overview", requireAdmin, async (req, res) => {
   const session = sessionOf(req);
   const origin = session.scope === "project" ? session.project : str(req.query.project) || null;
   const now = Date.now();
 
-  const shops = listShops(origin);
-  const accounts = db
-    .prepare("SELECT * FROM accounts WHERE merged_into IS NULL")
-    .all()
-    .filter((a) => accountOriginOk(a, origin));
+  const shops = await listShops(origin);
+  const rows = await db.all("SELECT * FROM accounts WHERE merged_into IS NULL");
+  const accounts = [];
+  for (const a of rows) {
+    if (await accountOriginOk(a, origin)) accounts.push(a);
+  }
 
-  const subscriptions = computeSubscriptions(accounts);
-  const stats = aggregateStats(shops);
+  const subscriptions = await computeSubscriptions(accounts);
+  const stats = await aggregateStats(shops);
 
   // Revenu Elyndra = somme des paiements (abonnements) sur la période
-  const revenueToday = db.prepare("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= ?").get(now - DAY_MS).s;
-  const revenueWeek = db.prepare("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= ?").get(now - 7 * DAY_MS).s;
-  const revenueMonth = db.prepare("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= ?").get(now - 30 * DAY_MS).s;
-  const revenueYear = db.prepare("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= ?").get(now - 365 * DAY_MS).s;
+  const revenueToday = (await db.get("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= $1", now - DAY_MS)).s;
+  const revenueWeek = (await db.get("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= $1", now - 7 * DAY_MS)).s;
+  const revenueMonth = (await db.get("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= $1", now - 30 * DAY_MS)).s;
+  const revenueYear = (await db.get("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= $1", now - 365 * DAY_MS)).s;
 
   // Paiements du mois courant
   const monthStart = new Date(now).getDate() === 1
     ? now
     : new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime();
-  const paymentsMonth = db.prepare("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= ?").get(monthStart).s;
+  const paymentsMonth = (await db.get("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= $1", monthStart)).s;
 
   // Paiements en attente (SMS unmatched + requests pending)
-  const pendingSms = db.prepare("SELECT COUNT(*) AS c FROM sms_payments WHERE status IN ('pending','unmatched')").get().c;
-  const pendingRequests = db.prepare("SELECT COUNT(*) AS c FROM subscription_requests WHERE status = 'pending'").get().c;
+  const pendingSms = (await db.get("SELECT COUNT(*) AS c FROM sms_payments WHERE status IN ('pending','unmatched')")).c;
+  const pendingRequests = (await db.get("SELECT COUNT(*) AS c FROM subscription_requests WHERE status = 'pending'")).c;
   const pendingPayments = pendingSms + pendingRequests;
 
   // Clients (comptes) — nouveau aujourd'hui, actifs
@@ -83,20 +85,21 @@ router.get("/api/v1/admin/overview", requireAdmin, (req, res) => {
   ).length;
 
   // Paiements confirmés (événements de paiement validés)
-  const confirmedPayments = db.prepare(
-    origin
-      ? "SELECT COUNT(*) AS c FROM payment_events WHERE status = 'confirmed' AND created_at >= ? AND account_id IN (SELECT id FROM accounts WHERE merged_into IS NULL)"
-      : "SELECT COUNT(*) AS c FROM payment_events WHERE status = 'confirmed'",
-  ).get().c;
+  const confirmedPayments = origin
+    ? (await db.get(
+        "SELECT COUNT(*) AS c FROM payment_events WHERE status = 'confirmed' AND created_at >= $1 AND account_id IN (SELECT id FROM accounts WHERE merged_into IS NULL)",
+        now - DAY_MS,
+      )).c
+    : (await db.get("SELECT COUNT(*) AS c FROM payment_events WHERE status = 'confirmed'")).c;
 
   // Paiements en attente (payment_events pending)
-  const pendingEventPayments = db.prepare("SELECT COUNT(*) AS c FROM payment_events WHERE status = 'pending'").get().c;
+  const pendingEventPayments = (await db.get("SELECT COUNT(*) AS c FROM payment_events WHERE status = 'pending'")).c;
 
   // Revenus récurrents = MRR × 1 mois (revenu mensuel récurrent)
   const recurringRevenue = subscriptions.mrr_fcfa;
 
   // CA boutique sur 7 jours (fenêtre glissante réelle, indépendante de l'agrégat sync)
-  const shopWeek = db.prepare("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= ?").get(now - 7 * DAY_MS).s;
+  const shopWeek = (await db.get("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= $1", now - 7 * DAY_MS)).s;
 
   res.json({
     generated_at: now,
@@ -146,17 +149,19 @@ router.get("/api/v1/admin/overview", requireAdmin, (req, res) => {
 });
 
 // ── Clients (comptes) — liste unifiée ─────────────────────────────────────────────
-router.get("/api/v1/admin/clients", requireAdmin, (req, res) => {
+router.get("/api/v1/admin/clients", requireAdmin, async (req, res) => {
   const session = sessionOf(req);
   const origin = session.scope === "project" ? session.project : str(req.query.project) || null;
   const now = Date.now();
 
-  const accounts = db
-    .prepare("SELECT * FROM accounts WHERE merged_into IS NULL ORDER BY created_at DESC")
-    .all()
-    .filter((a) => accountOriginOk(a, origin))
-    .map((a) => {
-      const devices = accountDevices(a.id);
+  const rows = await db.all("SELECT * FROM accounts WHERE merged_into IS NULL ORDER BY created_at DESC");
+  const accounts = [];
+  for (const a of rows) {
+    if (await accountOriginOk(a, origin)) accounts.push(a);
+  }
+  const clients = await Promise.all(
+    accounts.map(async (a) => {
+      const devices = await accountDevices(a.id);
       const shops = devices;
       // Prochain paiement = prochaine échéance
       return {
@@ -184,36 +189,33 @@ router.get("/api/v1/admin/clients", requireAdmin, (req, res) => {
           status: d.suspended_at ? "suspended" : computeStatus(d),
         })),
       };
-    });
+    }),
+  );
 
-  res.json({ clients: accounts });
+  res.json({ clients });
 });
 
 // ── Fiche client détaillée ────────────────────────────────────────────────────────
-router.get("/api/v1/admin/clients/:id", requireAdmin, (req, res) => {
-  const account = accountById(Number(req.params.id));
+router.get("/api/v1/admin/clients/:id", requireAdmin, async (req, res) => {
+  const account = await accountById(Number(req.params.id));
   if (!account) return res.status(404).json({ error: "Client introuvable." });
   const session = sessionOf(req);
-  if (!accountOriginOk(account, session.scope === "project" ? session.project : null))
+  if (!(await accountOriginOk(account, session.scope === "project" ? session.project : null)))
     return res.status(403).json({ error: "Client hors de ce projet." });
 
   const now = Date.now();
-  const devices = accountDevices(account.id);
+  const devices = await accountDevices(account.id);
 
   // Historique des paiements du compte (account_id + legacy shop payments)
   const shopIds = devices.map((d) => d.id);
   const legacyPayments = shopIds.length
-    ? db.prepare(`SELECT * FROM payments WHERE account_id IS NULL AND shop_id IN (${shopIds.map(() => "?").join(",")})`).all(...shopIds)
+    ? await db.all(`SELECT * FROM payments WHERE account_id IS NULL AND shop_id IN (${shopIds.map((_, i) => "$" + (i + 1)).join(",")})`, ...shopIds)
     : [];
-  const payments = db
-    .prepare("SELECT * FROM payments WHERE account_id = ? ORDER BY created_at DESC")
-    .all(account.id)
+  const payments = (await db.all("SELECT * FROM payments WHERE account_id = $1 ORDER BY created_at DESC", account.id))
     .concat(legacyPayments.sort((a, b) => b.created_at - a.created_at));
 
   // Historique des paiement events
-  const paymentEvents = db
-    .prepare("SELECT * FROM payment_events WHERE account_id = ? ORDER BY received_at DESC LIMIT 50")
-    .all(account.id);
+  const paymentEvents = await db.all("SELECT * FROM payment_events WHERE account_id = $1 ORDER BY received_at DESC LIMIT 50", account.id);
 
   // Historique des abonnements (événements paiement = changements de palier)
   const subscriptionHistory = paymentEvents.map((pe) => ({
@@ -229,13 +231,11 @@ router.get("/api/v1/admin/clients/:id", requireAdmin, (req, res) => {
   }));
 
   // Historique des ordres admin
-  const commands = db
-    .prepare(
-      `SELECT id, action_type, payload, expires_at, created_at, delivered_at, superseded_at
-       FROM admin_commands WHERE account_id = ? ORDER BY created_at DESC LIMIT 50`,
-    )
-    .all(account.id)
-    .map((c) => ({ ...c, payload: JSON.parse(c.payload) }));
+  const commands = (await db.all(
+    `SELECT id, action_type, payload, expires_at, created_at, delivered_at, superseded_at
+     FROM admin_commands WHERE account_id = $1 ORDER BY created_at DESC LIMIT 50`,
+    account.id,
+  )).map((c) => ({ ...c, payload: JSON.parse(c.payload) }));
 
   // Activité récente (last sync, etc.)
   const activity = devices
@@ -250,13 +250,29 @@ router.get("/api/v1/admin/clients/:id", requireAdmin, (req, res) => {
     .slice(0, 10);
 
   // Dernière demande d'abonnement
-  const lastRequest = db
-    .prepare(
-      `SELECT status, plan_price, plan_devices, reference, created_at, decided_at, decided_by
-       FROM subscription_requests WHERE account_id = ? AND status != 'superseded'
-       ORDER BY created_at DESC LIMIT 1`,
-    )
-    .get(account.id);
+  const lastRequest = await db.get(
+    `SELECT status, plan_price, plan_devices, reference, created_at, decided_at, decided_by
+     FROM subscription_requests WHERE account_id = $1 AND status != 'superseded'
+     ORDER BY created_at DESC LIMIT 1`,
+    account.id,
+  );
+
+  const shopRows = await Promise.all(
+    devices.map(async (d) => ({
+      id: d.id,
+      device_id: d.device_id,
+      store_name: d.store_name,
+      owner_name: d.owner_name,
+      phone: d.phone ?? null,
+      location: d.location ?? null,
+      app_version_used: d.app_version_used ?? null,
+      app_origin: d.app_origin ?? "pos",
+      last_sync_at: d.last_sync_at ?? null,
+      registration_date: d.registration_date,
+      status: d.suspended_at ? "suspended" : computeStatus(d),
+      payments: (await db.get("SELECT COUNT(*) AS c FROM payments WHERE shop_id = $1", d.id)).c,
+    })),
+  );
 
   res.json({
     client: {
@@ -284,107 +300,93 @@ router.get("/api/v1/admin/clients/:id", requireAdmin, (req, res) => {
       history: subscriptionHistory,
       last_request: lastRequest ?? null,
     },
-    shops: devices.map((d) => ({
-      id: d.id,
-      device_id: d.device_id,
-      store_name: d.store_name,
-      owner_name: d.owner_name,
-      phone: d.phone ?? null,
-      location: d.location ?? null,
-      app_version_used: d.app_version_used ?? null,
-      app_origin: d.app_origin ?? "pos",
-      last_sync_at: d.last_sync_at ?? null,
-      registration_date: d.registration_date,
-      status: d.suspended_at ? "suspended" : computeStatus(d),
-      payments: db.prepare("SELECT COUNT(*) AS c FROM payments WHERE shop_id = ?").get(d.id).c,
-    })),
+    shops: shopRows,
     payments: {
       total_paid: payments.reduce((n, p) => n + p.amount, 0),
       last_payment: payments.length > 0 ? payments[0] : null,
       history: payments.slice(0, 50),
     },
     payment_events: paymentEvents,
-    commands: commands,
-    activity: activity,
+    commands,
+    activity,
   });
 });
 
 // ── Boutiques — liste + fiche détaillée ───────────────────────────────────────────
-router.get("/api/v1/admin/shops-detail", requireAdmin, (req, res) => {
+router.get("/api/v1/admin/shops-detail", requireAdmin, async (req, res) => {
   const session = sessionOf(req);
   const origin = session.scope === "project" ? session.project : str(req.query.project) || null;
   const now = Date.now();
 
-  const shops = listShops(origin).map((s) => {
-    const account = s.account_id ? accountById(s.account_id) : null;
-    const resolvedAccount = account ? resolveAccount(account) : null;
-    const accountDevicesList = resolvedAccount ? accountDevices(resolvedAccount.id) : [];
-    return {
-      id: s.id,
-      device_id: s.device_id,
-      store_name: s.store_name,
-      owner_name: s.owner_name,
-      phone: s.phone ?? null,
-      location: s.location ?? null,
-      registration_date: s.registration_date,
-      expiry_date: s.expiry_date,
-      suspended_at: s.suspended_at ?? null,
-      app_version_used: s.app_version_used ?? null,
-      app_origin: s.app_origin ?? "pos",
-      last_sync_at: s.last_sync_at ?? null,
-      account_id: s.account_id ?? null,
-      account_name: resolvedAccount?.name ?? null,
-      // Abonnement du compte marchand : palier (nom) et écrans utilisés / total.
-      plan_name: resolvedAccount ? planNameForDevices(resolvedAccount.max_devices) : null,
-      plan_price_fcfa: resolvedAccount ? priceForDevices(resolvedAccount.max_devices) : null,
-      account_device_count: accountDevicesList.length,
-      account_max_devices: resolvedAccount?.max_devices ?? null,
-      status: computeStatus(s),
-      payments: s.payments,
-      online: s.last_sync_at ? now - s.last_sync_at < ONLINE_WINDOW_MS : false,
-    };
-  });
+  const shops = await Promise.all(
+    (await listShops(origin)).map(async (s) => {
+      const account = s.account_id ? await accountById(s.account_id) : null;
+      const resolvedAccount = account ? await resolveAccount(account) : null;
+      const accountDevicesList = resolvedAccount ? await accountDevices(resolvedAccount.id) : [];
+      return {
+        id: s.id,
+        device_id: s.device_id,
+        store_name: s.store_name,
+        owner_name: s.owner_name,
+        phone: s.phone ?? null,
+        location: s.location ?? null,
+        registration_date: s.registration_date,
+        expiry_date: s.expiry_date,
+        suspended_at: s.suspended_at ?? null,
+        app_version_used: s.app_version_used ?? null,
+        app_origin: s.app_origin ?? "pos",
+        last_sync_at: s.last_sync_at ?? null,
+        account_id: s.account_id ?? null,
+        account_name: resolvedAccount?.name ?? null,
+        // Abonnement du compte marchand : palier (nom) et écrans utilisés / total.
+        plan_name: resolvedAccount ? planNameForDevices(resolvedAccount.max_devices) : null,
+        plan_price_fcfa: resolvedAccount ? priceForDevices(resolvedAccount.max_devices) : null,
+        account_device_count: accountDevicesList.length,
+        account_max_devices: resolvedAccount?.max_devices ?? null,
+        status: computeStatus(s),
+        payments: s.payments,
+        online: s.last_sync_at ? now - s.last_sync_at < ONLINE_WINDOW_MS : false,
+      };
+    }),
+  );
 
   res.json({ shops });
 });
 
 // ── Fiche boutique détaillée ───────────────────────────────────────────────────────
-router.get("/api/v1/admin/shops-detail/:device_id", requireAdmin, (req, res) => {
+router.get("/api/v1/admin/shops-detail/:device_id", requireAdmin, async (req, res) => {
   const device_id = str(req.params.device_id);
   const session = sessionOf(req);
-  const shop = byDeviceId(device_id);
+  const shop = await byDeviceId(device_id);
   if (!shop) return res.status(404).json({ error: "Boutique introuvable." });
   if (session.scope === "project" && shop.app_origin !== session.project)
     return res.status(403).json({ error: "Boutique hors de ce projet." });
 
   const now = Date.now();
-  const account = shop.account_id ? resolveAccount(accountById(shop.account_id)) : null;
+  const account = shop.account_id ? await resolveAccount(await accountById(shop.account_id)) : null;
 
-  const payments = db.prepare("SELECT * FROM payments WHERE shop_id = ? ORDER BY created_at DESC").all(shop.id);
-  const commands = db
-    .prepare(
-      `SELECT id, action_type, payload, expires_at, created_at, delivered_at, superseded_at
-       FROM admin_commands WHERE device_id = ? ORDER BY created_at DESC LIMIT 30`,
-    )
-    .all(device_id)
-    .map((c) => ({ ...c, payload: JSON.parse(c.payload) }));
+  const payments = await db.all("SELECT * FROM payments WHERE shop_id = $1 ORDER BY created_at DESC", shop.id);
+  const commands = (await db.all(
+    `SELECT id, action_type, payload, expires_at, created_at, delivered_at, superseded_at
+     FROM admin_commands WHERE device_id = $1 ORDER BY created_at DESC LIMIT 30`,
+    device_id,
+  )).map((c) => ({ ...c, payload: JSON.parse(c.payload) }));
 
   // CA de la boutique (depuis sync_payloads agrégés)
-  const syncRows = db
-    .prepare(
-      `SELECT sp.payload, sp.received_at
-       FROM sync_payloads sp
-       WHERE sp.device_id = ?
-       ORDER BY sp.received_at DESC LIMIT 1`,
-    )
-    .all(device_id);
+  const syncRow = await db.get(
+    `SELECT sp.payload, sp.received_at
+     FROM sync_payloads sp
+     WHERE sp.device_id = $1
+     ORDER BY sp.received_at DESC LIMIT 1`,
+    device_id,
+  );
 
   let shopStats = null;
-  if (syncRows.length > 0) {
+  if (syncRow) {
     try {
-      const p = JSON.parse(syncRows[0].payload);
+      const p = JSON.parse(syncRow.payload);
       shopStats = {
-        last_sync_at: syncRows[0].received_at,
+        last_sync_at: syncRow.received_at,
         totals: p.totals ?? { revenue: 0, profit: 0, sales: 0, items: 0, customers: 0 },
         top_products: Array.isArray(p.top_products) ? p.top_products : [],
         by_day: Array.isArray(p.by_day) ? p.by_day : [],
@@ -412,7 +414,7 @@ router.get("/api/v1/admin/shops-detail/:device_id", requireAdmin, (req, res) => 
       status: computeStatus(shop),
       online: shop.last_sync_at ? now - shop.last_sync_at < ONLINE_WINDOW_MS : false,
     },
-    account: account ? publicAccount(account) : null,
+    account: account ? await publicAccount(account) : null,
     payments,
     commands,
     stats: shopStats,
@@ -420,32 +422,37 @@ router.get("/api/v1/admin/shops-detail/:device_id", requireAdmin, (req, res) => 
 });
 
 // ── Appareils (vue détaillée des shops) ───────────────────────────────────────────
-router.get("/api/v1/admin/devices", requireAdmin, (req, res) => {
+router.get("/api/v1/admin/devices", requireAdmin, async (req, res) => {
   const session = sessionOf(req);
   const origin = session.scope === "project" ? session.project : str(req.query.project) || null;
   const now = Date.now();
 
-  const shops = listShops(origin);
-  const devices = shops.map((s) => {
-    const status = computeStatus(s);
-    return {
-      device_id: s.device_id,
-      store_name: s.store_name,
-      owner_name: s.owner_name,
-      phone: s.phone ?? null,
-      shop_id: s.id,
-      account_id: s.account_id ?? null,
-      app_origin: s.app_origin ?? "pos",
-      role: s.account_id ? "linked" : "unlinked",
-      status: s.last_sync_at && now - s.last_sync_at < ONLINE_WINDOW_MS ? "online" : "offline",
-      last_sync_at: s.last_sync_at ?? null,
-      app_version_used: s.app_version_used ?? null,
-      registration_date: s.registration_date,
-      expiry_date: s.expiry_date,
-      suspended_at: s.suspended_at ?? null,
-      sync_pending: db.prepare("SELECT COUNT(*) AS c FROM admin_commands WHERE device_id = ? AND delivered_at IS NULL AND superseded_at IS NULL").get(s.device_id).c,
-    };
-  });
+  const shops = await listShops(origin);
+  const devices = await Promise.all(
+    shops.map(async (s) => {
+      const status = computeStatus(s);
+      return {
+        device_id: s.device_id,
+        store_name: s.store_name,
+        owner_name: s.owner_name,
+        phone: s.phone ?? null,
+        shop_id: s.id,
+        account_id: s.account_id ?? null,
+        app_origin: s.app_origin ?? "pos",
+        role: s.account_id ? "linked" : "unlinked",
+        status: s.last_sync_at && now - s.last_sync_at < ONLINE_WINDOW_MS ? "online" : "offline",
+        last_sync_at: s.last_sync_at ?? null,
+        app_version_used: s.app_version_used ?? null,
+        registration_date: s.registration_date,
+        expiry_date: s.expiry_date,
+        suspended_at: s.suspended_at ?? null,
+        sync_pending: (await db.get(
+          "SELECT COUNT(*) AS c FROM admin_commands WHERE device_id = $1 AND delivered_at IS NULL AND superseded_at IS NULL",
+          s.device_id,
+        )).c,
+      };
+    }),
+  );
 
   const summary = {
     total: devices.length,
@@ -466,44 +473,57 @@ router.get("/api/v1/admin/devices", requireAdmin, (req, res) => {
 });
 
 // ── Synchronisation — état des syncs ────────────────────────────────────────────
-router.get("/api/v1/admin/sync", requireAdmin, (req, res) => {
+router.get("/api/v1/admin/sync", requireAdmin, async (req, res) => {
   const session = sessionOf(req);
   const origin = session.scope === "project" ? session.project : str(req.query.project) || null;
   const now = Date.now();
 
-  const shops = listShops(origin);
+  const shops = await listShops(origin);
 
   // Dernières synchronisations
-  const lastSyncs = db
-    .prepare(
-      `SELECT sp.device_id, sp.app_origin, sp.received_at, sp.payload
-       FROM sync_payloads sp
-       JOIN (SELECT device_id, MAX(received_at) AS m FROM sync_payloads GROUP BY device_id) t
-         ON sp.device_id = t.device_id AND sp.received_at = t.m
-       ${origin ? "WHERE sp.app_origin = ?" : ""}
-       ORDER BY sp.received_at DESC`,
-    )
-    .all(...(origin ? [origin] : []));
+  const lastSyncs = await db.all(
+    `SELECT sp.device_id, sp.app_origin, sp.received_at, sp.payload
+     FROM sync_payloads sp
+     JOIN (SELECT device_id, MAX(received_at) AS m FROM sync_payloads GROUP BY device_id) t
+       ON sp.device_id = t.device_id AND sp.received_at = t.m
+     ${origin ? "WHERE sp.app_origin = $1" : ""}
+     ORDER BY sp.received_at DESC`,
+    ...(origin ? [origin] : []),
+  );
 
   const connectedDevices = shops.filter(
     (s) => s.last_sync_at && now - s.last_sync_at < ONLINE_WINDOW_MS,
   ).length;
 
-  const syncStatus = shops.map((s) => {
-    const lastSync = s.last_sync_at;
-    const recentSyncs = db.prepare("SELECT COUNT(*) AS c FROM sync_payloads WHERE device_id = ?").get(s.device_id).c;
-    const isOnline = lastSync && now - lastSync < ONLINE_WINDOW_MS;
-    return {
-      device_id: s.device_id,
-      store_name: s.store_name,
-      app_origin: s.app_origin ?? "pos",
-      status: isOnline ? "online" : lastSync ? "offline" : "never",
-      last_sync_at: lastSync ?? null,
-      operations_count: recentSyncs,
-      pending: db.prepare("SELECT COUNT(*) AS c FROM admin_commands WHERE device_id = ? AND delivered_at IS NULL AND superseded_at IS NULL").get(s.device_id).c,
-      errors: 0,
-    };
-  });
+  const syncStatus = await Promise.all(
+    shops.map(async (s) => {
+      const lastSync = s.last_sync_at;
+      const recentSyncs = (await db.get("SELECT COUNT(*) AS c FROM sync_payloads WHERE device_id = $1", s.device_id)).c;
+      const isOnline = lastSync && now - lastSync < ONLINE_WINDOW_MS;
+      return {
+        device_id: s.device_id,
+        store_name: s.store_name,
+        app_origin: s.app_origin ?? "pos",
+        status: isOnline ? "online" : lastSync ? "offline" : "never",
+        last_sync_at: lastSync ?? null,
+        operations_count: recentSyncs,
+        pending: (await db.get("SELECT COUNT(*) AS c FROM admin_commands WHERE device_id = $1 AND delivered_at IS NULL AND superseded_at IS NULL", s.device_id)).c,
+        errors: 0,
+      };
+    }),
+  );
+
+  const pendingCommands = origin
+    ? (await db.get(
+        `SELECT COUNT(*) AS c FROM admin_commands WHERE delivered_at IS NULL AND superseded_at IS NULL AND expires_at > $1
+         AND (SELECT app_origin FROM shops WHERE shops.device_id = admin_commands.device_id) = $2`,
+        now,
+        origin,
+      )).c
+    : (await db.get(
+        "SELECT COUNT(*) AS c FROM admin_commands WHERE delivered_at IS NULL AND superseded_at IS NULL AND expires_at > $1",
+        now,
+      )).c;
 
   res.json({
     connected: connectedDevices,
@@ -515,17 +535,12 @@ router.get("/api/v1/admin/sync", requireAdmin, (req, res) => {
       received_at: s.received_at,
     })),
     // Opérations en attente (commandes non livrées)
-    pending_commands: db
-      .prepare(
-        `SELECT COUNT(*) AS c FROM admin_commands WHERE delivered_at IS NULL AND superseded_at IS NULL AND expires_at > ?
-         ${origin ? "AND (SELECT app_origin FROM shops WHERE shops.device_id = admin_commands.device_id) = ?" : ""}`,
-      )
-      .get(...(origin ? [now, origin] : [now])).c,
+    pending_commands: pendingCommands,
   });
 });
 
 // ── Activité / timeline ───────────────────────────────────────────────────────────
-router.get("/api/v1/admin/activity", requireAdmin, (req, res) => {
+router.get("/api/v1/admin/activity", requireAdmin, async (req, res) => {
   const session = sessionOf(req);
   const origin = session.scope === "project" ? session.project : str(req.query.project) || null;
   const limit = Math.min(100, Math.max(10, Math.round(Number(req.query.limit)) || 50));
@@ -536,23 +551,26 @@ router.get("/api/v1/admin/activity", requireAdmin, (req, res) => {
 
   const conditions = [];
   const args = [];
+  const ph = () => "$" + (args.length + 1);
   if (origin) {
-    conditions.push("(project_id = ? OR shop_id IN (SELECT id FROM shops WHERE app_origin = ?))");
+    conditions.push(`(project_id = ${ph()} OR shop_id IN (SELECT id FROM shops WHERE app_origin = ${ph()}))`);
     args.push(origin, origin);
   }
   if (category) {
-    conditions.push("category = ?");
+    conditions.push(`category = ${ph()}`);
     args.push(category);
   }
   if (level) {
-    conditions.push("level = ?");
+    conditions.push(`level = ${ph()}`);
     args.push(level);
   }
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
-  const rows = db
-    .prepare(`SELECT * FROM activity_events ${where} ORDER BY created_at DESC LIMIT ?`)
-    .all(...args, limit);
+  const rows = await db.all(
+    `SELECT * FROM activity_events ${where} ORDER BY created_at DESC LIMIT ${ph()}`,
+    ...args,
+    limit,
+  );
 
   const events = rows.map((r) => ({
     id: r.id,
@@ -571,22 +589,21 @@ router.get("/api/v1/admin/activity", requireAdmin, (req, res) => {
 });
 
 // ── Audit log ──────────────────────────────────────────────────────────────────────
-router.get("/api/v1/admin/audit", requireMaster, (req, res) => {
+router.get("/api/v1/admin/audit", requireMaster, async (req, res) => {
   const limit = Math.min(200, Math.max(10, Math.round(Number(req.query.limit)) || 100));
   const targetType = str(req.query.target_type);
-  const rows = db
-    .prepare(
-      `SELECT * FROM admin_actions
-       ${targetType ? "WHERE target_type = ?" : ""}
-       ORDER BY created_at DESC LIMIT ?`,
-    )
-    .all(...(targetType ? [targetType, limit] : [limit]));
+  const rows = await db.all(
+    `SELECT * FROM admin_actions
+     ${targetType ? "WHERE target_type = $1" : ""}
+     ORDER BY created_at DESC LIMIT ${targetType ? "$2" : "$1"}`,
+    ...(targetType ? [targetType, limit] : [limit]),
+  );
 
   res.json({ actions: rows });
 });
 
 // ── Paiements (vue unifiée payments + sms_payments + payment_events) ───────────────
-router.get("/api/v1/admin/payments-view", requireAdmin, (req, res) => {
+router.get("/api/v1/admin/payments-view", requireAdmin, async (req, res) => {
   const session = sessionOf(req);
   const origin = session.scope === "project" ? session.project : str(req.query.project) || null;
   const now = Date.now();
@@ -596,57 +613,48 @@ router.get("/api/v1/admin/payments-view", requireAdmin, (req, res) => {
 
   // Paiements legacy (table payments)
   const shopIds = origin
-    ? db.prepare("SELECT id FROM shops WHERE app_origin = ?").all(origin).map((s) => s.id)
+    ? (await db.all("SELECT id FROM shops WHERE app_origin = $1", origin)).map((s) => s.id)
     : null;
 
-  const shopFilter = shopIds ? `AND shop_id IN (${shopIds.map(() => "?").join(",")})` : "";
-  const shopArgs = shopIds ? shopIds : [];
+  const shopFilter = shopIds && shopIds.length > 0
+    ? `AND shop_id IN (${shopIds.map((_, i) => "$" + (i + 2)).join(",")})`
+    : "";
+  const shopArgs = shopIds ?? [];
 
   let legacyPayments;
   if (origin) {
-    legacyPayments = db
-      .prepare(
-        `SELECT p.*, s.store_name, s.device_id FROM payments p
-         JOIN shops s ON p.shop_id = s.id
-         WHERE s.app_origin = ?
-         ORDER BY p.created_at DESC LIMIT 200`,
-      )
-      .all(origin);
+    legacyPayments = await db.all(
+      `SELECT p.*, s.store_name, s.device_id FROM payments p
+       JOIN shops s ON p.shop_id = s.id
+       WHERE s.app_origin = $1
+       ORDER BY p.created_at DESC LIMIT 200`,
+      origin,
+    );
   } else {
-    legacyPayments = db
-      .prepare(
-        `SELECT p.*, s.store_name, s.device_id FROM payments p
-         LEFT JOIN shops s ON p.shop_id = s.id
-         ORDER BY p.created_at DESC LIMIT 200`,
-      )
-      .all();
+    legacyPayments = await db.all(
+      `SELECT p.*, s.store_name, s.device_id FROM payments p
+       LEFT JOIN shops s ON p.shop_id = s.id
+       ORDER BY p.created_at DESC LIMIT 200`,
+    );
   }
 
   // Payment events (unifiés)
-  const eventRows = db
-    .prepare(
-      `SELECT pe.*, a.name AS account_name, s.store_name
-       FROM payment_events pe
-       LEFT JOIN accounts a ON pe.account_id = a.id
-       LEFT JOIN shops s ON pe.shop_id = s.id
-       ORDER BY pe.received_at DESC LIMIT 100`,
-    )
-    .all();
+  const eventRows = await db.all(
+    `SELECT pe.*, a.name AS account_name, s.store_name
+     FROM payment_events pe
+     LEFT JOIN accounts a ON pe.account_id = a.id
+     LEFT JOIN shops s ON pe.shop_id = s.id
+     ORDER BY pe.received_at DESC LIMIT 100`,
+  );
 
   // SMS payments
-  const smsRows = db.prepare("SELECT * FROM sms_payments ORDER BY received_at DESC LIMIT 100").all();
+  const smsRows = await db.all("SELECT * FROM sms_payments ORDER BY received_at DESC LIMIT 100");
 
   // Totaux
-  const todayTotal = db
-    .prepare(`SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= ? ${shopFilter}`)
-    .get(todayStart, ...shopArgs).s;
-  const monthTotal = db
-    .prepare(`SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= ? ${shopFilter}`)
-    .get(monthStart, ...shopArgs).s;
-  const pendingCount = db
-    .prepare("SELECT COUNT(*) AS c FROM sms_payments WHERE status IN ('pending','unmatched')").get().c;
-  const confirmedCount = db
-    .prepare("SELECT COUNT(*) AS c FROM payment_events WHERE status = 'confirmed'").get().c;
+  const todayTotal = (await db.get(`SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= $1 ${shopFilter}`, todayStart, ...shopArgs)).s;
+  const monthTotal = (await db.get(`SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= $1 ${shopFilter}`, monthStart, ...shopArgs)).s;
+  const pendingCount = (await db.get("SELECT COUNT(*) AS c FROM sms_payments WHERE status IN ('pending','unmatched')")).c;
+  const confirmedCount = (await db.get("SELECT COUNT(*) AS c FROM payment_events WHERE status = 'confirmed'")).c;
 
   res.json({
     payments: legacyPayments,
@@ -663,42 +671,42 @@ router.get("/api/v1/admin/payments-view", requireAdmin, (req, res) => {
 });
 
 // ── Action : suspendre / réactiver un client (compte) ────────────────────────────
-router.post("/api/v1/admin/clients/:id/suspend", requireAdmin, (req, res) => {
-  const account = accountById(Number(req.params.id));
+router.post("/api/v1/admin/clients/:id/suspend", requireAdmin, async (req, res) => {
+  const account = await accountById(Number(req.params.id));
   if (!account) return res.status(404).json({ error: "Client introuvable." });
   const session = sessionOf(req);
-  if (!accountOriginOk(account, session.scope === "project" ? session.project : null))
+  if (!(await accountOriginOk(account, session.scope === "project" ? session.project : null)))
     return res.status(403).json({ error: "Client hors de ce projet." });
 
   const now = Date.now();
-  db.prepare("UPDATE accounts SET suspended_at = ?, updated_at = ? WHERE id = ?").run(now, now, account.id);
-  syncShopsFromAccount(account.id);
-  logAdminAction(req, "account", account.id, "suspend", str(req.body?.reason));
-  logActivity("warn", "account", "Compte suspendu", `${account.name} a été suspendu`, { account_id: account.id }, null, account.id);
-  res.json({ ok: true, account: publicAccount(accountById(account.id)) });
+  await db.run("UPDATE accounts SET suspended_at = $1, updated_at = $2 WHERE id = $3", now, now, account.id);
+  await syncShopsFromAccount(account.id);
+  await logAdminAction(req, "account", account.id, "suspend", str(req.body?.reason));
+  await logActivity("warn", "account", "Compte suspendu", `${account.name} a été suspendu`, { account_id: account.id }, null, account.id);
+  res.json({ ok: true, account: await publicAccount(await accountById(account.id)) });
 });
 
-router.post("/api/v1/admin/clients/:id/activate", requireAdmin, (req, res) => {
-  const account = accountById(Number(req.params.id));
+router.post("/api/v1/admin/clients/:id/activate", requireAdmin, async (req, res) => {
+  const account = await accountById(Number(req.params.id));
   if (!account) return res.status(404).json({ error: "Client introuvable." });
   const session = sessionOf(req);
-  if (!accountOriginOk(account, session.scope === "project" ? session.project : null))
+  if (!(await accountOriginOk(account, session.scope === "project" ? session.project : null)))
     return res.status(403).json({ error: "Client hors de ce projet." });
 
   const now = Date.now();
-  db.prepare("UPDATE accounts SET suspended_at = NULL, updated_at = ? WHERE id = ?").run(now, account.id);
-  syncShopsFromAccount(account.id);
-  logAdminAction(req, "account", account.id, "activate", str(req.body?.reason));
-  logActivity("success", "account", "Compte réactivé", `${account.name} a été réactivé`, { account_id: account.id }, null, account.id);
-  res.json({ ok: true, account: publicAccount(accountById(account.id)) });
+  await db.run("UPDATE accounts SET suspended_at = NULL, updated_at = $1 WHERE id = $2", now, account.id);
+  await syncShopsFromAccount(account.id);
+  await logAdminAction(req, "account", account.id, "activate", str(req.body?.reason));
+  await logActivity("success", "account", "Compte réactivé", `${account.name} a été réactivé`, { account_id: account.id }, null, account.id);
+  res.json({ ok: true, account: await publicAccount(await accountById(account.id)) });
 });
 
 // ── Action : changer l'abonnement d'un client ──────────────────────────────────────
-router.post("/api/v1/admin/clients/:id/plan", requireAdmin, (req, res) => {
-  const account = accountById(Number(req.params.id));
+router.post("/api/v1/admin/clients/:id/plan", requireAdmin, async (req, res) => {
+  const account = await accountById(Number(req.params.id));
   if (!account) return res.status(404).json({ error: "Client introuvable." });
   const session = sessionOf(req);
-  if (!accountOriginOk(account, session.scope === "project" ? session.project : null))
+  if (!(await accountOriginOk(account, session.scope === "project" ? session.project : null)))
     return res.status(403).json({ error: "Client hors de ce projet." });
 
   const days = Math.round(Number(req.body?.days));
@@ -708,25 +716,25 @@ router.post("/api/v1/admin/clients/:id/plan", requireAdmin, (req, res) => {
   const now = Date.now();
   let result;
   if (Number.isFinite(amount) && amount > 0) {
-    result = applyTierRenewal(account, amount, now);
+    result = await applyTierRenewal(account, amount, now);
     if (!result) return res.status(400).json({ error: "Montant insuffisant pour un palier." });
   } else {
     const newExpiry = Math.max(now, account.expiry_date) + days * DAY_MS;
-    db.prepare("UPDATE accounts SET suspended_at = NULL, expiry_date = ?, updated_at = ? WHERE id = ?").run(newExpiry, now, account.id);
-    syncShopsFromAccount(account.id);
+    await db.run("UPDATE accounts SET suspended_at = NULL, expiry_date = $1, updated_at = $2 WHERE id = $3", newExpiry, now, account.id);
+    await syncShopsFromAccount(account.id);
     result = { days, tier: { devices: account.max_devices, price: priceForDevices(account.max_devices) }, new_end_date: newExpiry };
   }
 
-  logAdminAction(req, "account", account.id, "change_plan", req.body?.reason ? str(req.body.reason) : null);
-  logActivity("info", "account", "Abonnement modifié", `${account.name} — ${amount ? amount + " FCFA" : days + " jours"}`, { account_id: account.id }, null, account.id);
-  res.json({ ok: true, account: publicAccount(accountById(account.id)), result });
+  await logAdminAction(req, "account", account.id, "change_plan", req.body?.reason ? str(req.body.reason) : null);
+  await logActivity("info", "account", "Abonnement modifié", `${account.name} — ${amount ? amount + " FCFA" : days + " jours"}`, { account_id: account.id }, null, account.id);
+  res.json({ ok: true, account: await publicAccount(await accountById(account.id)), result });
 });
 
-router.post("/api/v1/admin/clients/:id/extend", requireAdmin, (req, res) => {
-  const account = accountById(Number(req.params.id));
+router.post("/api/v1/admin/clients/:id/extend", requireAdmin, async (req, res) => {
+  const account = await accountById(Number(req.params.id));
   if (!account) return res.status(404).json({ error: "Client introuvable." });
   const session = sessionOf(req);
-  if (!accountOriginOk(account, session.scope === "project" ? session.project : null))
+  if (!(await accountOriginOk(account, session.scope === "project" ? session.project : null)))
     return res.status(403).json({ error: "Client hors de ce projet." });
 
   const amount = Math.round(Number(req.body?.amount_fcfa));
@@ -734,15 +742,15 @@ router.post("/api/v1/admin/clients/:id/extend", requireAdmin, (req, res) => {
     return res.status(400).json({ error: "amount_fcfa requis." });
 
   const now = Date.now();
-  const renewal = applyTierRenewal(account, amount, now);
+  const renewal = await applyTierRenewal(account, amount, now);
   if (!renewal) return res.status(400).json({ error: `Montant insuffisant. Paliers : ${PRICE_TIERS.map((t) => `${t.price.toLocaleString("fr-FR")} F (${t.devices} appareils)`).join(" · ")}.` });
 
-  logAdminAction(req, "account", account.id, "extend", req.body?.note ? str(req.body.note) : null);
-  logActivity("success", "payment", "Paiement reçu", `${account.name} — ${amount.toLocaleString("fr-FR")} F`, { account_id: account.id, amount }, null, account.id);
+  await logAdminAction(req, "account", account.id, "extend", req.body?.note ? str(req.body.note) : null);
+  await logActivity("success", "payment", "Paiement reçu", `${account.name} — ${amount.toLocaleString("fr-FR")} F`, { account_id: account.id, amount }, null, account.id);
 
   // Créer le payment_event
-  const anchor = db.prepare("SELECT id FROM shops WHERE account_id = ? ORDER BY registration_date ASC, id ASC LIMIT 1").get(account.id);
-  upsertPaymentEvent({
+  const anchor = await db.get("SELECT id FROM shops WHERE account_id = $1 ORDER BY registration_date ASC, id ASC LIMIT 1", account.id);
+  await upsertPaymentEvent({
     account_id: account.id,
     shop_id: anchor?.id,
     amount,
@@ -754,29 +762,29 @@ router.post("/api/v1/admin/clients/:id/extend", requireAdmin, (req, res) => {
     note: str(req.body?.note) || null,
   });
 
-  res.json({ ok: true, account: publicAccount(accountById(account.id)), renewal });
+  res.json({ ok: true, account: await publicAccount(await accountById(account.id)), renewal });
 });
 
 // ── Action : révoquer un appareil (supprimer une caisse du compte) ────────────────
-router.post("/api/v1/admin/devices/:device_id/revoke", requireAdmin, (req, res) => {
+router.post("/api/v1/admin/devices/:device_id/revoke", requireAdmin, async (req, res) => {
   const device_id = str(req.params.device_id);
-  const shop = byDeviceId(device_id);
+  const shop = await byDeviceId(device_id);
   if (!shop) return res.status(404).json({ error: "Appareil introuvable." });
   const session = sessionOf(req);
   if (session.scope === "project" && shop.app_origin !== session.project)
     return res.status(403).json({ error: "Appareil hors de ce projet." });
 
-  logAdminAction(req, "shop", shop.id, "revoke_device", str(req.body?.reason));
-  logActivity("warn", "device", "Appareil révoqué", `${shop.store_name} (${device_id})`, { device_id, shop_id: shop.id }, shop.id, shop.account_id);
+  await logAdminAction(req, "shop", shop.id, "revoke_device", str(req.body?.reason));
+  await logActivity("warn", "device", "Appareil révoqué", `${shop.store_name} (${device_id})`, { device_id, shop_id: shop.id }, shop.id, shop.account_id);
 
-  deleteShop(device_id);
+  await deleteShop(device_id);
   res.json({ ok: true, device_id });
 });
 
 // ── Action : forcer une synchronisation (marqueur pour prochain handshake) ──────────
-router.post("/api/v1/admin/devices/:device_id/force-sync", requireAdmin, (req, res) => {
+router.post("/api/v1/admin/devices/:device_id/force-sync", requireAdmin, async (req, res) => {
   const device_id = str(req.params.device_id);
-  const shop = byDeviceId(device_id);
+  const shop = await byDeviceId(device_id);
   if (!shop) return res.status(404).json({ error: "Appareil introuvable." });
   const session = sessionOf(req);
   if (session.scope === "project" && shop.app_origin !== session.project)
@@ -787,49 +795,55 @@ router.post("/api/v1/admin/devices/:device_id/force-sync", requireAdmin, (req, r
   const cmdId = randomUUID();
   const expiresAt = now + COMMAND_TTL_MS;
   const accountId = shop.account_id ?? null;
-  db.prepare(
-    "INSERT INTO admin_commands (id, device_id, account_id, action_type, payload, expires_at, created_at) VALUES (?, ?, ?, 'broadcast_message', ?, ?, ?)",
-  ).run(cmdId, device_id, accountId, JSON.stringify({ message_text: `[SYNC FORCÉE] ${str(req.body?.message) || "Actualisation déclenchée par l'administration."}` }), expiresAt, now);
+  await db.run(
+    "INSERT INTO admin_commands (id, device_id, account_id, action_type, payload, expires_at, created_at) VALUES ($1, $2, $3, 'broadcast_message', $4, $5, $6)",
+    cmdId,
+    device_id,
+    accountId,
+    JSON.stringify({ message_text: `[SYNC FORCÉE] ${str(req.body?.message) || "Actualisation déclenchée par l'administration."}` }),
+    expiresAt,
+    now,
+  );
 
-  logAdminAction(req, "shop", shop.id, "force_sync", str(req.body?.reason));
-  logActivity("info", "sync", "Synchronisation forcée", `Demande de sync pour ${shop.store_name}`, { device_id }, shop.id, shop.account_id);
+  await logAdminAction(req, "shop", shop.id, "force_sync", str(req.body?.reason));
+  await logActivity("info", "sync", "Synchronisation forcée", `Demande de sync pour ${shop.store_name}`, { device_id }, shop.id, shop.account_id);
 
   res.json({ ok: true, command_id: cmdId });
 });
 
 // ── Désactiver / réactiver une boutique ────────────────────────────────────────────
-router.post("/api/v1/admin/shops/:device_id/deactivate", requireAdmin, (req, res) => {
+router.post("/api/v1/admin/shops/:device_id/deactivate", requireAdmin, async (req, res) => {
   const device_id = str(req.params.device_id);
-  const shop = byDeviceId(device_id);
+  const shop = await byDeviceId(device_id);
   if (!shop) return res.status(404).json({ error: "Boutique introuvable." });
   const session = sessionOf(req);
   if (session.scope === "project" && shop.app_origin !== session.project)
     return res.status(403).json({ error: "Boutique hors de ce projet." });
 
   const now = Date.now();
-  db.prepare("UPDATE shops SET suspended_at = ?, updated_at = ? WHERE id = ?").run(now, now, shop.id);
-  logAdminAction(req, "shop", shop.id, "deactivate", str(req.body?.reason));
-  logActivity("warn", "shop", "Boutique désactivée", shop.store_name, { device_id }, shop.id, shop.account_id);
-  res.json({ ok: true, shop: publicShop(byId(shop.id)) });
+  await db.run("UPDATE shops SET suspended_at = $1, updated_at = $2 WHERE id = $3", now, now, shop.id);
+  await logAdminAction(req, "shop", shop.id, "deactivate", str(req.body?.reason));
+  await logActivity("warn", "shop", "Boutique désactivée", shop.store_name, { device_id }, shop.id, shop.account_id);
+  res.json({ ok: true, shop: publicShop(await byId(shop.id)) });
 });
 
-router.post("/api/v1/admin/shops/:device_id/reactivate", requireAdmin, (req, res) => {
+router.post("/api/v1/admin/shops/:device_id/reactivate", requireAdmin, async (req, res) => {
   const device_id = str(req.params.device_id);
-  const shop = byDeviceId(device_id);
+  const shop = await byDeviceId(device_id);
   if (!shop) return res.status(404).json({ error: "Boutique introuvable." });
   const session = sessionOf(req);
   if (session.scope === "project" && shop.app_origin !== session.project)
     return res.status(403).json({ error: "Boutique hors de ce projet." });
 
   const now = Date.now();
-  db.prepare("UPDATE shops SET suspended_at = NULL, updated_at = ? WHERE id = ?").run(now, shop.id);
-  logAdminAction(req, "shop", shop.id, "reactivate", str(req.body?.reason));
-  logActivity("success", "shop", "Boutique réactivée", shop.store_name, { device_id }, shop.id, shop.account_id);
-  res.json({ ok: true, shop: publicShop(byId(shop.id)) });
+  await db.run("UPDATE shops SET suspended_at = NULL, updated_at = $1 WHERE id = $2", now, shop.id);
+  await logAdminAction(req, "shop", shop.id, "reactivate", str(req.body?.reason));
+  await logActivity("success", "shop", "Boutique réactivée", shop.store_name, { device_id }, shop.id, shop.account_id);
+  res.json({ ok: true, shop: publicShop(await byId(shop.id)) });
 });
 
 // ── Revenue by tier amélioré (période configurable) ────────────────────────────────
-router.get("/api/v1/admin/revenue-timeseries", requireAdmin, (req, res) => {
+router.get("/api/v1/admin/revenue-timeseries", requireAdmin, async (req, res) => {
   const period = str(req.query.period) || "30d"; // 7d, 30d, 3m, 12m
   let days;
   if (period === "7d") days = 7;
@@ -839,9 +853,7 @@ router.get("/api/v1/admin/revenue-timeseries", requireAdmin, (req, res) => {
   else days = 30;
 
   const startMs = Date.now() - days * DAY_MS;
-  const row = db
-    .prepare("SELECT amount, created_at FROM payments WHERE created_at >= ? ORDER BY created_at ASC")
-    .all(startMs);
+  const row = await db.all("SELECT amount, created_at FROM payments WHERE created_at >= $1 ORDER BY created_at ASC", startMs);
 
   // Grouper par jour
   const byDay = new Map();
@@ -853,40 +865,38 @@ router.get("/api/v1/admin/revenue-timeseries", requireAdmin, (req, res) => {
   const result = Array.from(byDay.entries()).map(([day, revenue]) => ({ day, revenue }));
 
   // Revenus par abonnement (compte) et par boutique
-  const byAccount = db
-    .prepare(
-      `SELECT a.name, COALESCE(SUM(p.amount), 0) AS total
-       FROM payments p JOIN accounts a ON p.account_id = a.id
-       WHERE p.created_at >= ? GROUP BY a.id, a.name ORDER BY total DESC LIMIT 10`,
-    )
-    .all(startMs);
+  const byAccount = await db.all(
+    `SELECT a.name, COALESCE(SUM(p.amount), 0) AS total
+     FROM payments p JOIN accounts a ON p.account_id = a.id
+     WHERE p.created_at >= $1 GROUP BY a.id, a.name ORDER BY total DESC LIMIT 10`,
+    startMs,
+  );
 
-  const byShop = db
-    .prepare(
-      `SELECT s.store_name, COALESCE(SUM(p.amount), 0) AS total
-       FROM payments p JOIN shops s ON p.shop_id = s.id
-       WHERE p.created_at >= ? GROUP BY s.id, s.store_name ORDER BY total DESC LIMIT 10`,
-    )
-    .all(startMs);
+  const byShop = await db.all(
+    `SELECT s.store_name, COALESCE(SUM(p.amount), 0) AS total
+     FROM payments p JOIN shops s ON p.shop_id = s.id
+     WHERE p.created_at >= $1 GROUP BY s.id, s.store_name ORDER BY total DESC LIMIT 10`,
+    startMs,
+  );
 
   res.json({ period, days, by_day: result, by_account: byAccount, by_shop: byShop });
 });
 
 // ── Revenue summary (aujourd'hui / semaine / mois / année / récurrent / en attente) ─
-router.get("/api/v1/admin/revenue-summary", requireAdmin, (req, res) => {
+router.get("/api/v1/admin/revenue-summary", requireAdmin, async (req, res) => {
   const now = Date.now();
   const monthStart = new Date(now).getDate() === 1
     ? now
     : new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime();
   const yearStart = new Date(new Date().getFullYear(), 0, 1).getTime();
 
-  const today = db.prepare("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= ?").get(now - DAY_MS).s;
-  const week = db.prepare("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= ?").get(now - 7 * DAY_MS).s;
-  const month = db.prepare("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= ?").get(monthStart).s;
-  const year = db.prepare("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= ?").get(yearStart).s;
+  const today = (await db.get("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= $1", now - DAY_MS)).s;
+  const week = (await db.get("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= $1", now - 7 * DAY_MS)).s;
+  const month = (await db.get("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= $1", monthStart)).s;
+  const year = (await db.get("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= $1", yearStart)).s;
 
   // Revenus récurrents = MRR (comptes actifs)
-  const accounts = db.prepare("SELECT * FROM accounts WHERE merged_into IS NULL").all();
+  const accounts = await db.all("SELECT * FROM accounts WHERE merged_into IS NULL");
   const mrr = accounts
     .filter((a) => {
       const st = computeAccountStatus(a);
@@ -895,12 +905,12 @@ router.get("/api/v1/admin/revenue-summary", requireAdmin, (req, res) => {
     .reduce((sum, a) => sum + priceForDevices(a.max_devices), 0);
 
   // Paiements en attente
-  const pendingSms = db.prepare("SELECT COUNT(*) AS c FROM sms_payments WHERE status IN ('pending','unmatched')").get().c;
-  const pendingRequests = db.prepare("SELECT COUNT(*) AS c FROM subscription_requests WHERE status = 'pending'").get().c;
-  const pendingEventPayments = db.prepare("SELECT COUNT(*) AS c FROM payment_events WHERE status = 'pending'").get().c;
+  const pendingSms = (await db.get("SELECT COUNT(*) AS c FROM sms_payments WHERE status IN ('pending','unmatched')")).c;
+  const pendingRequests = (await db.get("SELECT COUNT(*) AS c FROM subscription_requests WHERE status = 'pending'")).c;
+  const pendingEventPayments = (await db.get("SELECT COUNT(*) AS c FROM payment_events WHERE status = 'pending'")).c;
 
   // Paiements confirmés
-  const confirmed = db.prepare("SELECT COUNT(*) AS c FROM payment_events WHERE status = 'confirmed'").get().c;
+  const confirmed = (await db.get("SELECT COUNT(*) AS c FROM payment_events WHERE status = 'confirmed'")).c;
 
   res.json({
     today,

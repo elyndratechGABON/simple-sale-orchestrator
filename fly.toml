@@ -9,15 +9,14 @@ primary_region = "cdg"
   dockerfile = "Dockerfile"
 
 [env]
-  # La base SQLite vit sur le VOLUME persistant ([[mounts]]), jamais dans l'image.
-  ORCHESTRATOR_DB = "/data/orchestrator.db"
+  # La base vit sur NEON (secret DATABASE_URL), plus aucun volume disque.
+  # DATABASE_URL, ADMIN_PASSWORD, SMS_WEBHOOK_TOKEN et OPS_TOKEN se posent via
+  # `flyctl secrets set` (jamais dans ce fichier commité).
   PORT = "8080"
   PRICE_PER_MONTH_FCFA = "10000"
   TRIAL_DAYS = "30"
-
-[[mounts]]
-  source = "data"
-  destination = "/data"
+  # Relais ops (boîte aux lettres) — public, pas un secret.
+  OPS_RELAY_URL = "https://simple-sale-orchestrator.vercel.app"
 
 [[http_service]]
   internal_port = 8080

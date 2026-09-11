@@ -1,0 +1,10 @@
+{
+  "builds": [{ "src": "api/index.mjs", "use": "@vercel/node" }],
+  "routes": [
+    { "src": "/api/(.*)", "dest": "/api/index.mjs" },
+    { "src": "/health", "dest": "/api/index.mjs" }
+  ],
+  "crons": [
+    { "path": "/api/v1/drain", "schedule": "0 6 * * *" }
+  ]
+}

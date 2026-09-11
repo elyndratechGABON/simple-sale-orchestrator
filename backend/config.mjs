@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
+import pg from "pg";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -19,11 +19,12 @@ if (existsSync(envFile)) {
 }
 
 export const PORT = Number(process.env.PORT ?? 8787);
-// Adresse du relais ops (boîte aux lettres Neon). Le DRAINER la vide par copie à chaque
-// démarrage + périodiquement. Sans .env ni variable d'env, le relais local (npm start
-// dans relay/, port 8080) est présumé ; en production, pointer vers l'URL déployée,
-// ex. https://ecaisse-ops-relay.vercel.app.
-export const OPS_RELAY_URL = String(process.env.OPS_RELAY_URL ?? "http://127.0.0.1:8080").replace(/\/+$/, "");
+// Adresse du relais ops (boîte à lettres.) Le DRAINER la vide par copie à chaque
+// démarrage + périodiquement. Sans .env ni variable d'env, c'est le relais PUBLIC
+// déployé (Vercel/Neon) qui est présumé ; en dev local, .env peut pointer ailleurs.
+export const OPS_RELAY_URL = String(
+  process.env.OPS_RELAY_URL ?? "https://simple-sale-orchestrator.vercel.app",
+).replace(/\/+$/, "");
 // Secret partagé du relais ops (header x-ops-token) — même valeur que l'env OPS_TOKEN du
 // relais déployé. La caisse, elle, l'envoie via VITE_OPS_TOKEN. Vide → relais ouvert (dev).
 export const OPS_TOKEN = process.env.OPS_TOKEN ?? "";
@@ -73,151 +74,66 @@ export const SMS_WEBHOOK_TOKEN =
     ? process.env.SMS_WEBHOOK_TOKEN
     : randomBytes(12).toString("hex");
 
-// ── Base SQLite (même fichier que l'ancien server.mjs) ────────────────────────────
-// ORCHESTRATOR_DB permet de pointer ailleurs (tests, déploiement) ; défaut : la base
-// historique de l'orchestrateur.
-const DATA_DIR = join(__dirname, "..", "orchestrator", "data");
-mkdirSync(DATA_DIR, { recursive: true });
-const DB_FILE = process.env.ORCHESTRATOR_DB
-  ? resolve(process.env.ORCHESTRATOR_DB)
-  : join(DATA_DIR, "orchestrator.db");
-export const db = new DatabaseSync(DB_FILE);
+// ── Base POSTGRES (Neon en production, localhost en dev) ──────────────────────────
+// DATABASE_URL : chaîne de connexion complète (libpq). En local, le pool pointe vers la
+// base de validation `orchestrator_local` du Postgres 15. L'orchestrateur est désormais
+// STATELESS côté disque : plus aucun fichier SQLite local à exposer (fini ngrok).
+const DATABASE_URL =
+  process.env.DATABASE_URL ?? "postgres://postgres:postgres@127.0.0.1:5432/orchestrator_local";
 
-db.exec("PRAGMA journal_mode = WAL;");
-db.exec(readFileSync(join(__dirname, "migrations.sql"), "utf8"));
+// Les agrégats COUNT/SUM reviennent en int8 (chaîne chez node-pg) : convertir en nombre
+// pour que toute l'arithmétique existante (.c, .s) reste en Number.
+pg.types.setTypeParser(pg.types.builtins.INT8, (v) => (v === null ? null : Number(v)));
+pg.types.setTypeParser(pg.types.builtins.INT4, (v) => (v === null ? null : Number(v)));
 
-// ── Paiements SMS (auto-renouvellement via TextBee) ──────────────────────────────
-// Les SMS de confirmation Mobile Money sont forwardés par TextBee vers le webhook.
-// Le serveur parse le SMS, match le client (phone + nom) et le montant (palier), puis
-// renouvelle automatiquement l'abonnement si tout correspond. TID UNIQUE = idempotence
-// (un SMS reçu 2 fois n'est jamais traité 2 fois).
-// Status : pending → matched | unmatched | duplicate | processed
-db.exec(`
-  CREATE TABLE IF NOT EXISTS sms_payments (
-    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-    raw_sms            TEXT NOT NULL,
-    phone              TEXT NOT NULL,
-    name               TEXT NOT NULL,
-    amount_fcfa        INTEGER NOT NULL,
-    tid                TEXT NOT NULL,
-    status             TEXT NOT NULL DEFAULT 'pending'
-                       CHECK (status IN ('pending', 'matched', 'unmatched', 'duplicate', 'processed')),
-    matched_account_id INTEGER REFERENCES accounts(id),
-    matched_tier_price INTEGER,
-    error              TEXT,
-    received_at        INTEGER NOT NULL,
-    processed_at       INTEGER,
-    created_at         INTEGER NOT NULL
-  );
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_sms_payments_tid ON sms_payments (tid);
-  CREATE INDEX IF NOT EXISTS idx_sms_payments_status ON sms_payments (status, created_at);
-`);
+export const pool = new pg.Pool({
+  connectionString: DATABASE_URL,
+  max: 10,
+  idleTimeoutMillis: 30_000,
+});
 
-// Colonnes ajoutées aux tables préexistantes (SQLite n'a pas `ADD COLUMN IF NOT EXISTS`).
-function columnNames(table) {
-  return db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
-}
-const shopsColumns = columnNames("shops");
-const addShopColumn = (name, ddl) => {
-  if (!shopsColumns.includes(name)) db.exec(`ALTER TABLE shops ADD COLUMN ${ddl}`);
-};
-addShopColumn("suspended_at", "suspended_at INTEGER");
-addShopColumn("app_version_used", "app_version_used TEXT");
-addShopColumn("last_sync_at", "last_sync_at INTEGER");
-addShopColumn("app_origin", "app_origin TEXT NOT NULL DEFAULT 'pos'");
-
-// Colonnes projets ajoutées (tarif, essai, type) — pilotées par manifest, ou réglées à
-// la main par le master. SQLite n'a pas `ADD COLUMN IF NOT EXISTS`.
-const projectColumns = columnNames("projects");
-const addProjectColumn = (name, ddl) => {
-  if (!projectColumns.includes(name)) db.exec(`ALTER TABLE projects ADD COLUMN ${ddl}`);
-};
-addProjectColumn("type", "type TEXT");
-addProjectColumn("price_per_month_fcfa", "price_per_month_fcfa INTEGER");
-addProjectColumn("trial_days", "trial_days INTEGER");
-
-// Colonnes du modèle multi-écrans : rattachement des fiches existantes à un compte,
-// paiements et commandes adressables au niveau compte.
-addShopColumn("account_id", "account_id INTEGER");
-const addColumn = (table, name, ddl) => {
-  if (!columnNames(table).includes(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
-};
-addColumn("payments", "account_id", "account_id INTEGER");
-addColumn("admin_commands", "account_id", "account_id INTEGER");
-// La boîte aux lettres accepte désormais `delete_account_request` (approbation/refus de
-// la suppression d'une caisse demandée par l'employé, cf. delete_requests). Le CHECK de
-// la table ne se modifie PAS en place sous SQLite : on reconstruit UNE fois (renommage +
-// recopie), en conservant la colonne `account_id` ajoutée ci-dessus. Détection par le
-// SQL enregistré — une base déjà migrée ne repasse jamais par là.
-{
-  const adminCommandsDdl =
-    db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'admin_commands'").get()?.sql ??
-    "";
-  if (!adminCommandsDdl.includes("delete_account_request")) {
-    db.exec("BEGIN");
+// Facette d'accès proche de l'API SQLite historique, mais ASYNC (promesses) :
+//   await db.run(sql, ...params) → { changes }    (INSERT/UPDATE/DELETE)
+//   await db.get(sql, ...params)  → ligne | undefined
+//   await db.all(sql, ...params)  → lignes[]
+//   await db.exec(sql)            → exécution sans paramètre
+//   await db.tx(client => {...})  → transaction (BEGIN/COMMIT/ROLLBACK)
+// Les `?` SQLite deviennent des `$1..$n` Postgres à chaque appel.
+export const db = {
+  async run(sql, ...params) {
+    const r = await pool.query(sql, params);
+    return { changes: r.rowCount ?? 0 };
+  },
+  async get(sql, ...params) {
+    const r = await pool.query(sql, params);
+    return r.rows[0];
+  },
+  async all(sql, ...params) {
+    const r = await pool.query(sql, params);
+    return r.rows;
+  },
+  async exec(sql) {
+    await pool.query(sql);
+    return { changes: 0 };
+  },
+  async tx(fn) {
+    const client = await pool.connect();
     try {
-      db.exec("ALTER TABLE admin_commands RENAME TO admin_commands_legacy");
-      db.exec(`
-        CREATE TABLE admin_commands (
-          id            TEXT PRIMARY KEY,
-          device_id     TEXT NOT NULL,
-          account_id    INTEGER,
-          action_type   TEXT NOT NULL CHECK (action_type IN ('suspend', 'renew', 'broadcast_message', 'delete_account_request')),
-          payload       TEXT NOT NULL,
-          expires_at    INTEGER NOT NULL,
-          delivered_at  INTEGER,
-          superseded_at INTEGER,
-          created_at    INTEGER NOT NULL
-        )
-      `);
-      db.exec(
-        `INSERT INTO admin_commands (id, device_id, account_id, action_type, payload, expires_at, delivered_at, superseded_at, created_at)
-         SELECT id, device_id, account_id, action_type, payload, expires_at, delivered_at, superseded_at, created_at
-         FROM admin_commands_legacy`,
-      );
-      db.exec("DROP TABLE admin_commands_legacy");
-      db.exec("CREATE INDEX IF NOT EXISTS idx_admin_commands_device ON admin_commands (device_id)");
-      db.exec(
-        "CREATE INDEX IF NOT EXISTS idx_admin_commands_pending ON admin_commands (device_id, delivered_at, superseded_at)",
-      );
-      db.exec("COMMIT");
-    } catch (e) {
-      db.exec("ROLLBACK");
-      throw e;
+      await client.query("BEGIN");
+      const result = await fn(client);
+      await client.query("COMMIT");
+      return result;
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw err;
+    } finally {
+      client.release();
     }
-  }
-}
-// Fusion par nom d'enseigne : un compte absorbé garde sa ligne (ses identifiants restent
-// valides à l'authentification) mais redirige vers le compte survivant via merged_into.
-addColumn("accounts", "merged_into", "merged_into INTEGER");
-// Mot clé de récupération : fourni à la FIN de la création du compte, il permet de
-// rattacher un nouvel écran (téléphone perdu) depuis n'importe quel appareil. Unique et
-// conservé côté serveur ; jamais renvoyé ensuite — l'écran créateur le reçoit une seule
-// fois, les autres le tiennent de leur utilisateur.
-addColumn("accounts", "keyword", "keyword TEXT");
-db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_keyword ON accounts (keyword) WHERE keyword IS NOT NULL");
-
-// ── Empreinte numérique de l'appareil (Phase 2 — 1 téléphone = 1 boutique) ────────
-// SHA-256 de (user-agent + screen + timezone + hardwareConcurrency + langue). Le serveur
-// exige l'unicité : un même appareil physique ne peut créer qu'une seule boutique, même
-// si l'utilisateur tente une réinscription avec un device_id différent.
-addShopColumn("device_fingerprint", "device_fingerprint TEXT");
-const shopsHasFingerprint = shopsColumns.includes("device_fingerprint") ||
-  db.prepare("PRAGMA index_list('shops')").all().some((i) => i.name === "uniq_fingerprint");
-if (!shopsHasFingerprint) {
-  try {
-    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uniq_fingerprint ON shops (device_fingerprint) WHERE device_fingerprint IS NOT NULL`);
-  } catch {
-    // Index peut déjà exister si la colonne a été ajoutée manuellement.
-  }
-}
+  },
+};
 
 // ── Projets ────────────────────────────────────────────────────────────────────────
-// Un projet peut être adossé à un MANIFEST (dossier `backend/manifests/*.json`) : le
-// fichier décrit le type d'app, son tarif et ses KPI. Généré par `tools/project-scanner`
-// pour chaque app du réseau. Quand un handshake arrive avec un `app_origin` inconnu,
-// le manifest correspondant (s'il existe) sert à provisionner le projet correctement.
-export const projectById = (id) => db.prepare("SELECT * FROM projects WHERE id = ?").get(id);
+export const projectById = (id) => db.get("SELECT * FROM projects WHERE id = $1", id);
 
 // ── Registre des manifests (types de projet connus) ────────────────────────────────
 const MANIFESTS_DIR = join(__dirname, "manifests");
@@ -239,8 +155,8 @@ console.log(
 
 // ── Tarif & essai effectifs d'un projet ─────────────────────────────────────────────
 // Priorité : valeur enregistrée sur le projet > manifest du même id > valeurs globales.
-export function projectConfig(origin) {
-  const proj = origin ? projectById(origin) : null;
+export async function projectConfig(origin) {
+  const proj = origin ? await projectById(origin) : null;
   if (proj?.price_per_month_fcfa != null || proj?.trial_days != null) {
     return {
       price_per_month_fcfa: proj.price_per_month_fcfa ?? PRICE_PER_MONTH_FCFA,
@@ -254,16 +170,40 @@ export function projectConfig(origin) {
   };
 }
 
-// Projet de référence : 'pos' prend le mot de passe admin par défaut, pour que la
+// ── Initialisation : schéma Postgres + semence du projet 'pos' ─────────────────────
+// À appeler UNE fois avant d'écouter (index.mjs) : migrations idempotentes, puis le
+// projet de référence 'pos' prend le mot de passe admin par défaut, pour que la
 // connexion historique (sans nom de projet) retrouve son dashboard. Tarif/essai/type
 // initialisés depuis son manifest s'il existe.
-{
-  const seedCfg = projectConfig("pos");
-  db.prepare(
-    `INSERT OR IGNORE INTO projects
-       (id, name, password, created_at, type, price_per_month_fcfa, trial_days)
-     VALUES ('pos', 'Caisse', ?, ?, ?, ?, ?)`,
-  ).run(ADMIN_PASSWORD, Date.now(), seedCfg.type ?? null, seedCfg.price_per_month_fcfa, seedCfg.trial_days);
+//
+// Les instructions sont appliquées UNE PAR UNE : déjà validé sur Neon, où une exécution
+// groupée (client.query multi-statement) n'est pas fiable à travers le pooler. La
+// division se fait sur `;\n` et les en-têtes de commentaires sont escamotés.
+const MIGRATION_STATEMENT_RE = /^(CREATE|DROP|ALTER|INSERT|UPDATE|DELETE|SELECT)/i;
+async function applySchema(sql) {
+  for (const raw of sql.split(";\n")) {
+    const stmt = raw.replace(/^--[^\n]*\n?/gm, "").trim();
+    if (!stmt || !MIGRATION_STATEMENT_RE.test(stmt)) continue;
+    await pool.query(stmt);
+  }
+}
+
+export async function initialize() {
+  await applySchema(readFileSync(join(__dirname, "migrations.pg.sql"), "utf8"));
+  const seedCfg = await projectConfig("pos");
+  await db.run(
+    `INSERT INTO projects (id, name, password, created_at, type, price_per_month_fcfa, trial_days)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (id) DO NOTHING`,
+    "pos",
+    "Caisse",
+    ADMIN_PASSWORD,
+    Date.now(),
+    seedCfg.type ?? null,
+    seedCfg.price_per_month_fcfa,
+    seedCfg.trial_days,
+  );
+  console.log("[db] schéma Postgres prêt.");
 }
 
 // Une caisse est « en ligne » si on a eu de ses nouvelles il y a moins de 2 minutes.
