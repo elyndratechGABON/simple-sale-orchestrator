@@ -89,18 +89,21 @@ CREATE TABLE IF NOT EXISTS projects (
 
 -- Les COMPTES marchands : l'abonnement vit ici, pas sur la fiche boutique.
 CREATE TABLE IF NOT EXISTS accounts (
-  id           BIGSERIAL PRIMARY KEY,
-  name         TEXT NOT NULL,
-  owner_name   TEXT NOT NULL DEFAULT '',
-  phone        TEXT UNIQUE,
-  password     TEXT NOT NULL,
-  max_devices  BIGINT NOT NULL DEFAULT 2,
-  expiry_date  BIGINT NOT NULL,
-  suspended_at BIGINT,
-  created_at   BIGINT NOT NULL,
-  updated_at   BIGINT NOT NULL,
-  merged_into  BIGINT,
-  keyword      TEXT
+  id                   BIGSERIAL PRIMARY KEY,
+  name                 TEXT NOT NULL,
+  owner_name           TEXT NOT NULL DEFAULT '',
+  phone                TEXT UNIQUE,
+  password             TEXT NOT NULL,
+  max_devices          BIGINT NOT NULL DEFAULT 2,
+  expiry_date          BIGINT NOT NULL,
+  suspended_at         BIGINT,
+  created_at           BIGINT NOT NULL,
+  updated_at           BIGINT NOT NULL,
+  merged_into          BIGINT,
+  keyword              TEXT,
+  employee_count       BIGINT NOT NULL DEFAULT 0,
+  quarter              TEXT,
+  subscription_price   BIGINT NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_keyword ON accounts (keyword) WHERE keyword IS NOT NULL;
 
@@ -130,13 +133,55 @@ CREATE TABLE IF NOT EXISTS delete_requests (
   store_name  TEXT NOT NULL DEFAULT '',
   reason      TEXT NOT NULL DEFAULT '',
   status      TEXT NOT NULL DEFAULT 'pending'
-              CHECK (status IN ('pending', 'approved', 'rejected', 'superseded')),
+               CHECK (status IN ('pending', 'approved', 'rejected', 'superseded')),
   created_at  BIGINT NOT NULL,
   decided_at  BIGINT,
   decided_by  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_delete_requests_device ON delete_requests (device_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_delete_requests_pending ON delete_requests (status, created_at);
+
+-- Panneau publicitaire
+CREATE TABLE IF NOT EXISTS ads (
+  id          BIGSERIAL PRIMARY KEY,
+  type        TEXT NOT NULL CHECK (type IN ('image', 'video', 'text')),
+  title       TEXT NOT NULL DEFAULT '',
+  content     TEXT NOT NULL DEFAULT '',
+  url         TEXT,
+  image_url   TEXT,
+  video_url   TEXT,
+  active      BIGINT NOT NULL DEFAULT 1,
+  created_at  BIGINT NOT NULL,
+  updated_at  BIGINT NOT NULL
+);
+
+-- Actualités du Gabon
+CREATE TABLE IF NOT EXISTS news (
+  id          BIGSERIAL PRIMARY KEY,
+  title       TEXT NOT NULL,
+  body        TEXT NOT NULL DEFAULT '',
+  source      TEXT NOT NULL DEFAULT '',
+  image_url   TEXT,
+  video_url   TEXT,
+  active      BIGINT NOT NULL DEFAULT 1,
+  created_at  BIGINT NOT NULL,
+  updated_at  BIGINT NOT NULL
+);
+
+-- Notifications ciblées
+CREATE TABLE IF NOT EXISTS notifications (
+  id          BIGSERIAL PRIMARY KEY,
+  account_id  BIGINT REFERENCES accounts(id),
+  type        TEXT NOT NULL CHECK (type IN ('text', 'image', 'video')),
+  title       TEXT NOT NULL,
+  body        TEXT NOT NULL DEFAULT '',
+  image_url   TEXT,
+  video_url   TEXT,
+  is_global   BIGINT NOT NULL DEFAULT 0,
+  sent_at     BIGINT,
+  created_at  BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_account ON notifications (account_id);
 
 CREATE TABLE IF NOT EXISTS admin_actions (
   id          BIGSERIAL PRIMARY KEY,

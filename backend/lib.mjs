@@ -122,6 +122,9 @@ export async function publicAccount(account) {
     phone: account.phone ?? null,
     max_devices: account.max_devices,
     device_count: (await accountDevices(account.id)).length,
+    employee_count: account.employee_count ?? 0,
+    quarter: account.quarter ?? null,
+    subscription_price: account.subscription_price ?? 0,
     subscription_end_date: account.expiry_date,
     suspended_at: account.suspended_at ?? null,
     // Grace period : si le compte est en grace, renvoyer la date de fin de grace
@@ -459,11 +462,14 @@ export async function createAccount({
   max_devices,
   expiry_date,
   suspended_at = null,
+  employee_count = 0,
+  quarter = null,
+  subscription_price = 0,
 }) {
   const now = Date.now();
   const info = await db.get(
-    `INSERT INTO accounts (name, owner_name, phone, password, keyword, max_devices, expiry_date, suspended_at, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, $8, $9)
+    `INSERT INTO accounts (name, owner_name, phone, password, keyword, max_devices, expiry_date, suspended_at, employee_count, quarter, subscription_price, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, $8, $9, $10, $11, $12)
      RETURNING id`,
     name,
     owner_name,
@@ -472,6 +478,9 @@ export async function createAccount({
     max_devices,
     expiry_date,
     suspended_at,
+    employee_count,
+    quarter,
+    subscription_price,
     now,
     now,
   );

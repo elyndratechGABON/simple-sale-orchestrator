@@ -107,17 +107,70 @@ CREATE TABLE IF NOT EXISTS projects (
 -- secret partagé saisi sur chaque appareil. `phone` peut être NULL (comptes créés en
 -- rattrapage pour des fiches sans numéro) : SQLite admet plusieurs NULL dans un UNIQUE.
 CREATE TABLE IF NOT EXISTS accounts (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  name         TEXT NOT NULL,
-  owner_name   TEXT NOT NULL DEFAULT '',
-  phone        TEXT UNIQUE,
-  password     TEXT NOT NULL,
-  max_devices  INTEGER NOT NULL DEFAULT 2,
-  expiry_date  INTEGER NOT NULL,
-  suspended_at INTEGER,
-  created_at   INTEGER NOT NULL,
-  updated_at   INTEGER NOT NULL
+  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  name                 TEXT NOT NULL,
+  owner_name           TEXT NOT NULL DEFAULT '',
+  phone                TEXT UNIQUE,
+  password             TEXT NOT NULL,
+  max_devices          INTEGER NOT NULL DEFAULT 2,
+  expiry_date          INTEGER NOT NULL,
+  suspended_at         INTEGER,
+  created_at           INTEGER NOT NULL,
+  updated_at           INTEGER NOT NULL,
+  employee_count       INTEGER NOT NULL DEFAULT 0,
+  quarter              TEXT,
+  subscription_price   INTEGER NOT NULL DEFAULT 0
 );
+
+-- ── Extensions ECAISSE — colonnes ajoutées en runtime par index.mjs (PRAGMA table_info)
+-- car SQLite ne connaît pas ADD COLUMN IF NOT EXISTS.
+--   employee_count : nombre d'employés de la boutique (modifiable manuellement)
+--   quarter        : quartier du commerce
+--   ads            : panneau publicitaire (contenu image/vidéo/texte)
+--   news          : actualités du Gabon (notifications globales)
+--   subscription_price : prix de l'abonnement mensuel (FCFA)
+
+-- ── Panneau publicitaire — images, vidéos, texte pour les propriétaires et employés
+CREATE TABLE IF NOT EXISTS ads (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  type        TEXT NOT NULL CHECK (type IN ('image', 'video', 'text')),
+  title       TEXT NOT NULL DEFAULT '',
+  content     TEXT NOT NULL DEFAULT '',
+  url         TEXT,
+  image_url   TEXT,
+  video_url   TEXT,
+  active      INTEGER NOT NULL DEFAULT 1,
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+
+-- ── Actualités du Gabon — notifications globales avec sources
+CREATE TABLE IF NOT EXISTS news (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  title       TEXT NOT NULL,
+  body        TEXT NOT NULL DEFAULT '',
+  source      TEXT NOT NULL DEFAULT '',
+  image_url   TEXT,
+  video_url   TEXT,
+  active      INTEGER NOT NULL DEFAULT 1,
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+
+-- ── Notifications ciblées (globales ou par compte)
+CREATE TABLE IF NOT EXISTS notifications (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id  INTEGER,
+  type        TEXT NOT NULL CHECK (type IN ('text', 'image', 'video')),
+  title       TEXT NOT NULL,
+  body        TEXT NOT NULL DEFAULT '',
+  image_url   TEXT,
+  video_url   TEXT,
+  is_global   INTEGER NOT NULL DEFAULT 0,
+  sent_at     INTEGER,
+  created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_account ON notifications (account_id);
 
 -- Les DEMANDES d'abonnement : la caisse dépose ici la preuve d'un paiement mobile
 -- money (palier choisi + référence de transaction) ; le dashboard la valide ou la
