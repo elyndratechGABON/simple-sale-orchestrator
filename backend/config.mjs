@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+﻿import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
@@ -28,7 +28,23 @@ export const OPS_RELAY_URL = String(
 // Secret partagé du relais ops (header x-ops-token) — même valeur que l'env OPS_TOKEN du
 // relais déployé. La caisse, elle, l'envoie via VITE_OPS_TOKEN. Vide → relais ouvert (dev).
 export const OPS_TOKEN = process.env.OPS_TOKEN ?? "";
+// Pepper de dérivation des clés d'archive. 32 octets base64 recommendé. Une clé par
+// boutique = HKDF(BACKUP_KEY, account_id) : un vol de la base ne suffit pas sans ce
+// secret, et une fuite ne compromet qu'UN compte si le secret est volé séparément.
+export const BACKUP_KEY = process.env.BACKUP_KEY ?? "";
 export const OPS_DRAIN_INTERVAL_MS = Number(process.env.OPS_DRAIN_INTERVAL_MS ?? 3_600_000);
+// Drainer opt-in, STRICTEMENT. Le défaut est « non ».
+//
+// Pourquoi : le drainer fait GET puis POST /ops/purge. Une instance locale armée du
+// bon OPS_TOKEN aspirerait les boutiques de PRODUCTION dans sa base locale, puis
+// purgerait le relais — le poste de dévolppement deviendrait le détenteur de la copie
+// d'archivage, et le drainer de production ne ferait plus son travail. Ce n'est pas un
+// détail : la variable qui stocke le mot de passe de la caisse est celle qui décide de
+// qui possède les données.
+//
+// Activer = poser OPS_DRAIN_ENABLED=true ET un OPS_TOKEN identique à celui du relais.
+// Les deux, jamais un seul.
+export const OPS_DRAIN_ENABLED = process.env.OPS_DRAIN_ENABLED === "true";
 export const PRICE_PER_MONTH_FCFA = Number(process.env.PRICE_PER_MONTH_FCFA ?? 10_000);
 export const TRIAL_DAYS = Number(process.env.TRIAL_DAYS ?? 30);
 // ── Paliers d'abonnement ───────────────────────────────────────────────────────────
@@ -57,6 +73,42 @@ export const DAY_MS = 86_400_000;
 // Durée de validité d'un ordre avant qu'il ne soit déclaré « non délivré (expiré) ».
 export const COMMAND_TTL_MS = 30 * DAY_MS;
 export const SESSION_MS = 7 * 24 * 3600 * 1000;
+
+// ── Secrets EXIGÉS en production ───────────────────────────────────────────────────
+// Chacun lève une erreur au chargement si l'environnement ne le fournit pas. Le motif
+// est toujours le même : une valeur par défaut « pratique » est une valeur PUBLÉE, et
+// un secret qui se dégrade en mode ouvert n'est pas une protection.
+//
+//   ADMIN_PASSWORD     — le dashboard ; sans lui, l'admin est injoignable (le
+//                         fallback aléatoire change à chaque redémarrage).
+//   SMS_WEBHOOK_TOKEN   — le webhook qui porte les demandes de renouvellement ; sans
+//                         lui, l'endpoint est ouvert à quiconque.
+//   OPS_TOKEN           — le relais qui porte les ventes, stocks et prix.
+//   BACKUP_KEY          — pepper de l'archive chiffrée (récupération de boutique). La
+//                         perte de ce secret N'EMPÊCHE PAS de lire une archive déjà
+//                         déchiffrée par le drainer : elle rend seulement les
+//                         nouvelles écritures et les restaurations impossibles. On le
+//                         exige quand même, parce qu'un déploiement sans lui produirait
+//                         une archive en clair en croyant l'inverse.
+//
+// `CRON_SECRET` n'est PAS dans la liste : Vercel ne le transmet qu'aux invocations
+// programmées, et `app.mjs` ferme déjà la route quand il est absent. Son absence est un
+// archivage arrêté, visible dans les logs — pas une exposition.
+//
+// `REQUIRE_SECRETS=false` désactive ces garde-fous. Développement local uniquement : le
+// démarrage local ne doit pas exiger de configurer un déploiement complet.
+const REQUIRE_SECRETS = process.env.REQUIRE_SECRETS !== "false";
+if (REQUIRE_SECRETS) {
+  const missing = ["ADMIN_PASSWORD", "SMS_WEBHOOK_TOKEN", "OPS_TOKEN", "BACKUP_KEY"].filter(
+    (n) => !process.env[n] || process.env[n].length === 0,
+  );
+  if (missing.length) {
+    throw new Error(
+      `Secrets manquants : ${missing.join(", ")}. ` +
+        `Définis-les sur la plateforme, ou REQUIRE_SECRETS=false pour un run local.`,
+    );
+  }
+}
 // Grace period : 2 jours après l'expiration pendant lesquels le compte reste actif
 // (100% fonctionnel) avant la coupure définitive. Configurable via GRACE_PERIOD_DAYS.
 const GRACE_PERIOD_DAYS = Number(process.env.GRACE_PERIOD_DAYS ?? 2);
@@ -66,9 +118,14 @@ export const EXPLICIT =
   typeof process.env.ADMIN_PASSWORD === "string" && process.env.ADMIN_PASSWORD.length > 0;
 export const ADMIN_PASSWORD = EXPLICIT ? process.env.ADMIN_PASSWORD : randomBytes(8).toString("hex");
 
-// ── Webhook SMS (TextBee → auto-renouvellement) ───────────────────────────────────
+// ── Webhook SMS (TextBee → demandes de renouvellement) ───────────────────────────
 // Secret partagé exigé via `?token=` sur POST /api/v1/webhook/sms — TextBee l'injecte
-// dans l'URL du webhook configuré. Générez-en un fort : SMS_WEBHOOK_TOKEN=openssl rand -hex 24
+// dans l'URL du webhook configuré. Générez-en un fort : openssl rand -hex 24
+//
+// Il DOIT être défini : le fallback `randomBytes(12)` produit un secret différent à
+// CHAQUE redémarrage, donc différent de celui configuré chez TextBee — et comme le
+// secret est comparé avec `===`, un serveur qui redémarre cesse silencieusement de
+// recevoir les SMS. Le fail-fast le rend visible au déploiement plutôt qu'à l'utilisateur.
 export const SMS_WEBHOOK_TOKEN =
   typeof process.env.SMS_WEBHOOK_TOKEN === "string" && process.env.SMS_WEBHOOK_TOKEN.length > 0
     ? process.env.SMS_WEBHOOK_TOKEN
