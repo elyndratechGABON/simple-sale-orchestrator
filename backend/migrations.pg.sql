@@ -239,9 +239,42 @@ CREATE TABLE IF NOT EXISTS sync_ops (
   entity_id  TEXT NOT NULL,
   payload    TEXT NOT NULL,
   created_at BIGINT NOT NULL,
-  drained_at BIGINT NOT NULL
+  drained_at BIGINT NOT NULL,
+  sig        TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sync_ops_shop_drained ON sync_ops (shop_id, drained_at);
+
+-- Base déjà en service : la colonne arrive sans recréer la table (idempotent).
+ALTER TABLE sync_ops ADD COLUMN IF NOT EXISTS sig TEXT;
+
+-- Archive CHIFFRÉE (récupération de boutique). `payload` reste tel quel pour les lignes
+-- antérieures au chiffrement ; `payload_enc` porte "ENC1:<base64>" pour les nouvelles.
+-- On n'écrase jamais `payload` : c'est le filet de sécurité qui permet de rejouer une
+-- boutique dont BACKUP_KEY a été perdu (la route lit alors le clair, en clair).
+ALTER TABLE sync_ops ADD COLUMN IF NOT EXISTS payload_enc TEXT;
+
+-- ── Restauration d'une boutique depuis l'archive (récupération après perte) ─────────
+--
+-- La caisse灌注 un job, puis BOUGE la quand elle le veut jusqu'à `ready`. Le job reste
+-- REJOUABLE : `status` repasse par `pending` à chaque nouvelle demande, et rien n'est
+-- purgé. C'est ce qui permet de recommencer une restauration interrompue sans que
+-- l'orchestrateur ait à intervenir.
+--
+-- `total_ops` n'est renseigné qu'une fois l'archive drainée : tant qu'il est NULL, le
+-- client doit afficher « lancez l'orchestrateur », JAMAIS « aucune donnée » — la
+-- différence entre les deux est tout l'intérêt du bouton.
+CREATE TABLE IF NOT EXISTS restore_jobs (
+  id          TEXT PRIMARY KEY,        -- nanoid opaque, non devinable : c'est la seule
+                                        -- chose qui autorise la lecture de l'archive
+  account_id  BIGINT NOT NULL REFERENCES accounts(id),
+  shop_id     TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'pending',  -- pending | ready
+  total_ops   BIGINT,                  -- NULL = pas encore drainé
+  created_at  BIGINT NOT NULL,
+  resumed_at  BIGINT                   -- dernière reprise
+);
+CREATE INDEX IF NOT EXISTS idx_restore_jobs_account ON restore_jobs (account_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_restore_jobs_shop ON restore_jobs (shop_id, status);
 
 CREATE TABLE IF NOT EXISTS device_blessings (
   device_id  TEXT NOT NULL,

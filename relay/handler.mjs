@@ -76,11 +76,16 @@ async function storeOps(p, shopId, ops) {
           JSON.stringify(op.payload ?? null),
           Number(op.created_at ?? now) || now,
           now,
+          // Signature persistée telle quelle : le relais ne la vérifie pas, mais DOIT la
+          // rendre au pull. Sans cette colonne, `fetchOps` reconstruirait des ops sans
+          // `sig` et le récepteur — qui refuse tout ce qui ne se vérifie pas — les
+          // laisserait toutes de côté.
+          typeof op.sig === "string" ? op.sig : null,
         );
-        return `($${base + 1},$${base + 2},$${base + 3},$${base + 4},$${base + 5},$${base + 6},$${base + 7},$${base + 8},'synced',$${base + 9})`;
+        return `($${base + 1},$${base + 2},$${base + 3},$${base + 4},$${base + 5},$${base + 6},$${base + 7},$${base + 8},'synced',$${base + 9},$${base + 10})`;
       });
       const r = await client.query(
-        `INSERT INTO sync_ops (id, shop_id, device_id, seq, type, entity_id, payload, created_at, status, received_at)
+        `INSERT INTO sync_ops (id, shop_id, device_id, seq, type, entity_id, payload, created_at, status, received_at, sig)
          VALUES ${rows.join(",")}
          ON CONFLICT (id) DO NOTHING RETURNING id`,
         params,
@@ -100,7 +105,7 @@ export async function fetchOps(p, shopId) {
   const client = await p.connect();
   try {
     const { rows } = await client.query(
-      `SELECT id, shop_id, device_id, seq, type, entity_id, payload, created_at, status
+      `SELECT id, shop_id, device_id, seq, type, entity_id, payload, created_at, status, sig
        FROM sync_ops WHERE shop_id = $1 ORDER BY created_at, id LIMIT $2`,
       [shopId, MAX_PULL],
     );
@@ -109,6 +114,9 @@ export async function fetchOps(p, shopId) {
       seq: Number(r.seq),
       created_at: Number(r.created_at),
       payload: typeof r.payload === "string" ? JSON.parse(r.payload) : r.payload,
+      // `sig` null sur une op d'avant le déploiement : rendue telle quelle, la caisse
+      // la refusera (pas de signature) — c'est le comportement voulu, pas un bug du relais.
+      ...(r.sig ? { sig: r.sig } : {}),
     }));
   } finally {
     client.release();

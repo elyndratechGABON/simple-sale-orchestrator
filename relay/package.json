@@ -6,7 +6,8 @@
   "description": "Relais d'échange d'opérations entre caisses ELYNDRA — base Neon (PostgreSQL). Boîte aux lettres muette, découplée de l'orchestrateur.",
   "scripts": {
     "start": "node dev.mjs",
-    "schema": "node apply-schema.mjs"
+    "schema": "node apply-schema.mjs",
+    "migrate:sig": "node -e \"import('node:fs').then(fs=>process.stdout.write(fs.readFileSync('migrations/2026-10-01-ops-signature.sql','utf8')))\" | psql \"$DATABASE_URL\" -v ON_ERROR_STOP=1"
   },
   "dependencies": {
     "pg": "^8.13.1"

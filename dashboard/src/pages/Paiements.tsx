@@ -46,6 +46,9 @@ export function Paiements() {
   };
 
   const processed = smsPayments.filter((p) => p.status === "processed");
+  // Un SMS ne renouvelle PLUS rien tout seul : tout ce qui n'est pas `processed` attend
+  // une décision humaine. `pending` = numéro et montant reconnus, il suffit de confirmer ;
+  // `unmatched` = aucune correspondance automatique, il faut choisir le compte.
   const unmatched = smsPayments.filter((p) => p.status === "unmatched" || p.status === "pending");
   const duplicates = smsPayments.filter((p) => p.status === "duplicate");
 
@@ -85,7 +88,7 @@ export function Paiements() {
           <div className="panel-head">
             <div className="panel-title">
               <BanknoteIcon size={15} />
-              <span>Paiements SMS (auto-renouvellement TextBee)</span>
+              <span>Paiements SMS (à valider — TextBee)</span>
             </div>
           </div>
 
@@ -99,7 +102,7 @@ export function Paiements() {
               {processed.length > 0 && (
                 <>
                   <div className="sms-group-title">
-                    <span className="legend-dot ok" /> Renouvel\u00e9s automatiquement ({processed.length})
+                    <span className="legend-dot ok" /> Valid\u00e9s ({processed.length})
                   </div>
                   <ul className="sms-list">
                     {processed.slice(0, 6).map((p) => (

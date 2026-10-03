@@ -588,7 +588,17 @@ router.get("/api/v1/admin/sms-payments", requireAdmin, async (req, res) => {
 });
 
 // Rattachement manuel : body = { account_id }. Vérifie que le SMS est encore 'unmatched'
-// ou 'pending', applique la renouvelement, puis passe la ligne en 'processed'.
+// ou 'pending', applique la renouvellement, puis passe la ligne en 'processed'.
+//
+// C'est désormais LE SEUL chemin de renouvellement par SMS : le webhook ne prolonge plus
+// rien (cf. `entry.mjs`), il journalise. Un SMS reste donc une REQUÊTE jusqu'à ce clic —
+// nécessaire parce que le numéro du marchand est public (il circule dans le handshake) et
+// que `parseSms` est une regex : un SMS forgé au bon numéro et au bon palier renouvelait
+// auparavant n'importe quel abonnement.
+//
+  // `account_id` est OPTIONNEL quand le webhook a déjà apparié le SMS (`pending`) : le
+  // compte trouvé est alors celui du numéro payeur. Il reste exigé pour un `unmatched`,
+  // où le choix est une décision humaine. On n'oblige pas à ressaisir ce qu'on sait déjà.
 router.post("/api/v1/admin/sms-payments/:id/process", requireAdmin, async (req, res) => {
   const row = await db.get("SELECT * FROM sms_payments WHERE id = $1", Number(req.params.id));
   if (!row) return res.status(404).json({ error: "Paiement SMS introuvable." });
@@ -596,8 +606,20 @@ router.post("/api/v1/admin/sms-payments/:id/process", requireAdmin, async (req, 
     return res.status(409).json({ error: `Paiement déjà traité (${row.status}).` });
 
   const account_id = Math.round(Number(req.body?.account_id));
-  const account = Number.isFinite(account_id) && account_id > 0 ? await accountById(account_id) : null;
+  const account =
+    Number.isFinite(account_id) && account_id > 0
+      ? await accountById(account_id)
+      : row.matched_account_id
+        ? await accountById(row.matched_account_id)
+        : null;
   if (!account) return res.status(400).json({ error: "account_id invalide." });
+
+  // La session projet ne valide que les comptes de SON projet : sans ce garde, un
+  // dashboard de projet pourrait valider le paiement d'un concurrent en devinant son id.
+  const session = sessionOf(req);
+  if (!(await accountOriginOk(account, session.scope === "project" ? session.project : null)))
+    return res.status(403).json({ error: "Compte hors de ce projet." });
+
 
   const tier = tierForAmount(row.amount_fcfa);
   if (!tier)
@@ -615,10 +637,9 @@ router.post("/api/v1/admin/sms-payments/:id/process", requireAdmin, async (req, 
     now,
     row.id,
   );
-  const session = sessionOf(req);
   const by = session.scope === "project" ? `projet:${session.project}` : "master";
   console.log(
-    `[${new Date().toISOString()}] SMS #${row.id} RATTACHÉ par ${by} → « ${account.name} » (+${renewal.days} j, palier ${renewal.tier.devices})`,
+    `[${new Date().toISOString()}] SMS #${row.id} VALIDÉ par ${by} → « ${account.name} » (+${renewal.days} j, palier ${renewal.tier.devices})`,
   );
   res.json({
     ok: true,

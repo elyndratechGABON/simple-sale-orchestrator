@@ -23,7 +23,13 @@ CREATE TABLE IF NOT EXISTS sync_ops (
   payload    JSONB NOT NULL,          -- JSON-serialisable, jamais interprété ici
   created_at BIGINT NOT NULL,         -- horodatage d'émission (ms), servi au tri local
   status     TEXT NOT NULL DEFAULT 'synced',
-  received_at BIGINT NOT NULL         -- moment du dépôt chez le relais
+  received_at BIGINT NOT NULL,        -- moment du dépôt chez le relais
+  -- Signature ECDSA P-256 de l'opération, par la clé privée de `device_id`. Le relais ne
+  -- la VÉRIFIE PAS : il n'a pas les clés publiques et n'a pas à les avoir, c'est la
+  -- caisse qui refuse ce qui ne se vérifie pas à l'application (cf. `isTrustedOp`).
+  -- La colonne existe pour que la signature SURVIVE au passage : sans elle, le pull
+  -- rendrait des ops sans `sig` et le récepteur les refuserait toutes.
+  sig         TEXT
 );
 
 -- Index de restitution : un appareil tire TOUTES les ops de son groupe au pull.

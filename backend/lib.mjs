@@ -298,6 +298,9 @@ export const deviceBlessingsForAccount = (accountId) =>
   db.all("SELECT * FROM device_blessings WHERE account_id = $1", accountId);
 /** Crée ou renouvelle le secret par-appareil ; retourne le mot de passe généré. */
 export async function upsertDeviceCredential(deviceId, accountId) {
+  // Le secret est HACHÉ avant d'être stocké. Il ne sert qu'à être comparé, jamais lu :
+  // le seul endroit qui connaît la valeur en clair est celui qui l'a émise, donc une
+  // fuite de la base ne livre aucun secret d'appareil utilisable.
   const secret = randomBytes(16).toString("hex");
   const now = Date.now();
   await db.run(
@@ -306,7 +309,7 @@ export async function upsertDeviceCredential(deviceId, accountId) {
      ON CONFLICT(device_id) DO UPDATE SET account_id = excluded.account_id, password = excluded.password, created_at = excluded.created_at`,
     deviceId,
     accountId,
-    secret,
+    await hashPassword(secret),
     now,
   );
   return secret;

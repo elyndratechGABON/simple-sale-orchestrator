@@ -1,8 +1,12 @@
 // Connexion du dashboard + SSE temps réel + sessions (scopées par projet).
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
-import { SESSION_MS, ADMIN_PASSWORD, projectById, projectConfig } from "../config.mjs";
-import { str, byDeviceId, accountById, accountOriginOk } from "../lib.mjs";
+import { SESSION_MS, ADMIN_PASSWORD, projectById, projectConfig, db } from "../config.mjs";
+import { str, byDeviceId, accountById, accountOriginOk, hashPassword, verifyPassword } from "../lib.mjs";
+
+/** La valeur stockée est-elle déjà un condensat ? (cf. `hashPassword`) */
+const isHashed = (stored) =>
+  typeof stored === "string" && (stored.startsWith("sha256$") || stored.includes("argon2"));
 import { logActivity } from "./audit.mjs";
 
 const router = Router();
@@ -30,14 +34,62 @@ export function requireMaster(req, res, next) {
 // ── Connexion du dashboard ────────────────────────────────────────────────────────
 // Sans nom de projet → administrateur (scope master) ; avec un nom de projet → ce
 // dashboard dédié au projet (scope project, limité à ses caisses).
+// ── Limitation de débit ────────────────────────────────────────────────────────────
+// Sans elle, `POST /api/login` est une oracle de mots de passe : ADMIN_PASSWORD n'a pas
+// de limite de longueur ni de tentatives, et le projet se teste en boucle. Verrouiller
+// l'IP après N échecs rend l'énumération coûteuse sans jamais bloquer l'administrateur
+// légitime (dont la session, une fois ouverte, tient SESSION_MS sans repasser par ici).
+const LOGIN_MAX_FAILS = Number(process.env.LOGIN_MAX_FAILS ?? 8);
+const LOGIN_LOCK_MS = Number(process.env.LOGIN_LOCK_MS ?? 15 * 60_000);
+const loginFails = new Map(); // ip → { count, until }
+
+function loginLocked(ip) {
+  const e = loginFails.get(ip);
+  if (!e) return 0;
+  if (e.until && e.until > Date.now()) return e.until - Date.now();
+  if (e.until && e.until <= Date.now()) loginFails.delete(ip);
+  return 0;
+}
+function noteLoginFail(ip) {
+  const e = loginFails.get(ip) ?? { count: 0, until: 0 };
+  e.count += 1;
+  if (e.count >= LOGIN_MAX_FAILS) e.until = Date.now() + LOGIN_LOCK_MS;
+  loginFails.set(ip, e);
+}
+function clearLoginFail(ip) {
+  loginFails.delete(ip);
+}
+// Purge périodique : la Map ne doit pas grossir avec des IP éphémères (proxies, mobile).
+const loginSweep = setInterval(() => {
+  const now = Date.now();
+  for (const [ip, e] of loginFails) if (e.until && e.until <= now) loginFails.delete(ip);
+}, 60_000);
+loginSweep.unref?.();
+
 router.post("/api/login", async (req, res) => {
+  const ip = req.socket.remoteAddress ?? "inconnu";
+  const remaining = loginLocked(ip);
+  if (remaining > 0) {
+    return res
+      .status(429)
+      .json({ error: `Trop de tentatives. Réessayez dans ${Math.ceil(remaining / 60_000)} min.` });
+  }
+
   const project = str(req.body?.project);
   const password = str(req.body?.password);
   let session;
   if (project) {
     const proj = await projectById(project);
-    if (!proj || password !== proj.password)
+    // `verifyPassword` accepte aussi le format haché ET l'ancien format clair — les
+    // fiches projet créées avant le hachage restent utilisables, et se hachent au
+    // premier login réussi.
+    if (!proj || !verifyPassword(password, proj.password)) {
+      noteLoginFail(ip);
       return res.status(401).json({ error: "Projet ou mot de passe incorrect." });
+    }
+    if (!isHashed(proj.password)) {
+      await db.run("UPDATE projects SET password = $1 WHERE id = $2", await hashPassword(password), proj.id);
+    }
     session = {
       scope: "project",
       project: proj.id,
@@ -45,10 +97,13 @@ router.post("/api/login", async (req, res) => {
       expires: Date.now() + SESSION_MS,
     };
   } else {
-    if (password !== ADMIN_PASSWORD)
+    if (password !== ADMIN_PASSWORD) {
+      noteLoginFail(ip);
       return res.status(401).json({ error: "Mot de passe incorrect." });
+    }
     session = { scope: "master", expires: Date.now() + SESSION_MS };
   }
+  clearLoginFail(ip);
   for (const [t, e] of sessions) if (e.expires <= Date.now()) sessions.delete(t);
   const token = randomUUID();
   sessions.set(token, session);

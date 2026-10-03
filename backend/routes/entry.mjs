@@ -35,6 +35,8 @@ import {
   accountById,
   applyTierRenewal,
   tierForAmount,
+  hashPassword,
+  verifyPassword,
   deviceBlessing,
   deviceBlessingByDevice,
   deviceBlessingsForAccount,
@@ -83,7 +85,7 @@ router.post("/api/v1/handshake", async (req, res) => {
       console.log(
         `[${new Date().toISOString()}] COMPTE créé "${account.name}" (${accPhone}) par handshake — essai ${TRIAL_DAYS} j, ${tier.devices} place(s), mot clé généré`,
       );
-    } else if (existing.password !== accPassword) {
+    } else if (!verifyPassword(accPassword, existing.password)) {
       // Réclamation d'identifiants : l'écran présenté est DÉJÀ rattaché à ce compte
       // (rattachement hérité de la migration ou d'une fusion, dont le mot de passe
       // aléatoire ne connaît que le serveur). Il prouve son appartenance par son
@@ -92,7 +94,14 @@ router.post("/api/v1/handshake", async (req, res) => {
       const memberAccount = await resolveAccount(existing);
       const ownShop = await byDeviceId(device_id);
       if (memberAccount && ownShop && ownShop.account_id === memberAccount.id) {
-        await db.run("UPDATE accounts SET password = $1, updated_at = $2 WHERE id = $3", accPassword, now, memberAccount.id);
+        // HACHÉ, jamais en clair : la colonne ne doit contenir qu'un condensat. Un
+        // `SELECT *` sur la base ne doit jamais rendre un mot de passe lisible.
+        await db.run(
+          "UPDATE accounts SET password = $1, updated_at = $2 WHERE id = $3",
+          await hashPassword(accPassword),
+          now,
+          memberAccount.id,
+        );
         console.log(
           `[${new Date().toISOString()}] COMPTE re-keyé « ${memberAccount.name} » (${accPhone}) par l'écran ${device_id}`,
         );
@@ -537,6 +546,9 @@ router.post("/api/v1/webhook/sms", async (req, res) => {
     throw e;
   }
   const paymentId = Number(info.id);
+  // La ligne naît `pending` : l'état d'arrivée d'un SMS est « à lire », jamais « payé ».
+  // Avant, elle basculait en `processed` dans la MÊME requête, si vite que le Control
+  // Center n'avait rien à valider.
 
   // ── Matching automatique ────────────────────────────────────────────────────────
   // Téléphone exact d'abord ; sinon essai sans l'indicatif local (0 suivi d'un 9xx).
@@ -544,19 +556,40 @@ router.post("/api/v1/webhook/sms", async (req, res) => {
   if (!account && /^0\d{8,9}$/.test(parsed.phone)) account = await accountByPhone(parsed.phone.slice(1));
   const tier = tierForAmount(parsed.amount);
 
+  // ── AUCUN RENOUVELLEMENT AUTOMATIQUE ─────────────────────────────────────────
+  // Le SMS est une REQUÊTE, pas une preuve. Rien n'est prolongé ici : le paiement part
+  // en validation dans le Control Center (`POST /api/v1/admin/sms-payments/:id/process`,
+  // côté master), et c'est l'administrateur qui tranche.
+  //
+  // Pourquoi ce changement : le webhook n'authentifie que l'EXPÉDITEUR du SMS
+  // (TextBee), et `parseSms` est une regex. Or le numéro du marchand est PUBLIC — il
+  // figure dans le handshake que la caisse envoie périodiquement. Un attaquant qui
+  // intercepte un seul handshake connaît donc la cible, et n'a plus qu'à forger un SMS
+  // au bon montant pour renouveler un abonnement sans payer. Le matching téléphone +
+  // palier ne protégeait de rien : ce sont précisément les deux données connues.
+  //
+  // Le TID unique reste en place : il empêche qu'un même SMS soit traité deux fois, y
+  // compris par un humain qui recliquerait.
   if (account && tier) {
-    await applyTierRenewal(account, parsed.amount, now);
     await db.run(
-      "UPDATE sms_payments SET status = 'processed', matched_account_id = $1, matched_tier_price = $2, processed_at = $3 WHERE id = $4",
+      "UPDATE sms_payments SET status = 'pending', matched_account_id = $1, matched_tier_price = $2, error = $3, processed_at = $4 WHERE id = $5",
       account.id,
       tier.price,
+      "à valider dans le Control Center",
       now,
       paymentId,
     );
     console.log(
-      `[${new Date().toISOString()}] SMS #${paymentId} AUTO-RENOUVELLEMENT « ${account.name} » (${parsed.phone}) — ${parsed.amount.toLocaleString("fr-FR")} F, TID ${parsed.tid}`,
+      `[${new Date().toISOString()}] SMS #${paymentId} EN ATTENTE « ${account.name} » (${parsed.phone}) — ${parsed.amount.toLocaleString("fr-FR")} F, TID ${parsed.tid} — validation admin requise`,
     );
-    return res.json({ ok: true, status: "processed", account_id: account.id, payment_id: paymentId });
+    // 202 : la requête est ACCUSÉE, pas exécutée. TextBee cesse ses retries, et le
+    // front distingue ainsi « à valider » d'un simple rejet.
+    return res.json({
+      ok: true,
+      status: "pending",
+      account_id: account.id,
+      payment_id: paymentId,
+    });
   }
 
   const errorReason = !account
@@ -585,7 +618,7 @@ router.post("/api/v1/account/bless", async (req, res) => {
   if (!ownerPhone || !ownerPassword || !targetDeviceId)
     return res.status(400).json({ error: "account_phone, account_password, target_device_id requis." });
   const existing = await accountByPhone(ownerPhone);
-  if (!existing || existing.password !== ownerPassword)
+  if (!existing || !verifyPassword(ownerPassword, existing.password))
     return res.status(403).json({ error: "Identifiants du compte incorrects." });
   const account = await resolveAccount(existing);
   if (!account) return res.status(404).json({ error: "Compte introuvable." });

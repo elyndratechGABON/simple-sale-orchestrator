@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "start": "node index.mjs",
-    "dev": "node --watch index.mjs"
+    "dev": "node --watch index.mjs",
+    "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "express": "^4.21.2",
