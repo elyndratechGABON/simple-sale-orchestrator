@@ -1,5 +1,10 @@
 node_modules/
 dist/
+# Le Control Center est servi par backend/app.mjs (express.static sur dashboard/dist).
+# Vercel ne construit pas le dashboard : sans ces fichiers en versionne, le
+# tableau de bord est un 404 alors que l'API, elle, repond. 3 fichiers, 260 Ko.
+!dashboard/dist/
+!dashboard/dist/**
 .output/
 .wrangler/
 .env

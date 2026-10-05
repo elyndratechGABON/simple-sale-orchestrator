@@ -6,6 +6,5 @@
   ],
   "crons": [
     { "path": "/api/v1/drain", "schedule": "0 6 * * *" }
-  ],
-  "//crons": "Vercel joint `Authorization: Bearer $CRON_SECRET` à chaque tir. Sans cette variable d'environnement, la route /api/v1/drain répond 401 (elle est authentifiée) et l'archivage quotidien des ops ne tourne plus. À définir sur le projet Vercel, identique au CRON_SECRET lu par backend/app.mjs."
+  ]
 }
