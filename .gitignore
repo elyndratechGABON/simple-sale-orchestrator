@@ -7,7 +7,11 @@ dist/
 !dashboard/dist/**
 .output/
 .wrangler/
-.env
+# `.env` seul ne couvrait pas `.env.local` ni `.env.production`, et c'est
+# justement la que `vercel --prod` ecrit un VERCEL_OIDC_TOKEN. Le motif sans
+# slash couvre deja n'importe quel niveau, donc backend/ et relay/ sont inclus.
+.env*
+!.env.example
 bun.lock
 orchestrator/data/
 *.log
