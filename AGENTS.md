@@ -27,6 +27,30 @@ serveur à la réception. Ne pas écrire de logique « push » dans le backend.
 
 ## Landmines
 
+- **Un 409 ne doit rien écrire.** Le contrôle « un appareil physique = une boutique »
+  est une règle d'ACCÈS : il se fait AVANT `createAccount`, jamais au milieu du
+  handshake. Placé après, un refus laissait un compte créé sans aucune ligne `shops` —
+  invisible au tableau de bord, et un nouveau à chaque essai du commerçant. Un test
+  (`l'empreinte se vérifie AVANT la création du compte`) verrouille l'ordre.
+  Pour débloquer un commerçant bloqué par une collision d'empreinte :
+  `POST /api/v1/admin/shops/:device_id/release-fingerprint` sur la boutique qui BLOQUE
+  (efface `shops.device_fingerprint`, ne supprime rien).
+- **`initialize()` tourne À L'IMPORT.** `app.mjs` applique le schéma avant de construire
+  l'app : une base injoignable fait échouer l'import lui-même, donc TOUTES les routes
+  répondent 500 (`FUNCTION_INVOCATION_FAILED`) — y compris `/health`. Un « serveur mort »
+  commence par `DATABASE_URL` : un mot de passe Neon changé sans mettre à jour la
+  variable d'env Vercel suffit (les secrets y sont relus `[SENSITIVE]`, donc illisibles :
+  on ne peut que les réécrire depuis une source connue).
+- **Le build Vercel est à hurdle.** Trois pièges successifs ont laissé la prod servir
+  une fonction morte : il faut un script `build` dans `backend/package.json` (le projet
+  lance `npm run vercel-build` ou `npm run build`), `vercel.json` n'accepte aucune clé
+  inconnue (`includeFiles` était refusé), et le plan Hobby interdit un cron horaire —
+  le drain est quotidien (02:00 UTC). Le relais ne balaie pas en production, les ops
+  attendent le drainer : rien ne se perd entre deux jours.
+- **`OPS_TOKEN` doit être le même des trois côtés** : le relais, l'orchestrateur (drainer)
+  et `VITE_OPS_TOKEN` de la caisse. Se tromper côté drainer donne un 401 silencieux :
+  plus aucune archive, plus aucune purge, et la « restauration après perte » reste vide.
+
 - **Le serveur ne pousse jamais vers la caisse.** Tout passe par le handshake
   de la caisse. La suspension est un blocage dur côté caisse tant que le compte
   n'est pas relancé — c'est le handshake suivant qui applique la relance.

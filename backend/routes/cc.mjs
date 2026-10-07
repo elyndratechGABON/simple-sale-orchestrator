@@ -842,6 +842,39 @@ router.post("/api/v1/admin/shops/:device_id/reactivate", requireAdmin, async (re
   res.json({ ok: true, shop: publicShop(await byId(shop.id)) });
 });
 
+// ── Libérer l'empreinte d'une boutique ─────────────────────────────────────────────
+// Un conflit d'empreinte (`fingerprint_conflict`, 409 au handshake) refuse une
+// inscription sans créer de compte : le commerçant voit un blocage nommé et contacte le
+// support. Pour le débloquer, on efface l'empreinte de la boutique qui BLOQUE — celle-ci
+// se réenregistrera avec la sienne au prochain handshake. On ne supprime rien : ni la
+// boutique, ni son compte, ni son catalogue.
+router.post("/api/v1/admin/shops/:device_id/release-fingerprint", requireAdmin, async (req, res) => {
+  const device_id = str(req.params.device_id);
+  const shop = await byDeviceId(device_id);
+  if (!shop) return res.status(404).json({ error: "Boutique introuvable." });
+  const session = sessionOf(req);
+  if (session.scope === "project" && shop.app_origin !== session.project)
+    return res.status(403).json({ error: "Boutique hors de ce projet." });
+
+  const now = Date.now();
+  await db.run(
+    "UPDATE shops SET device_fingerprint = NULL, updated_at = $1 WHERE id = $2",
+    now,
+    shop.id,
+  );
+  await logAdminAction(req, "shop", shop.id, "release_fingerprint", str(req.body?.reason));
+  await logActivity(
+    "warn",
+    "device",
+    "Empreinte d'appareil libérée",
+    shop.store_name,
+    { device_id },
+    shop.id,
+    shop.account_id,
+  );
+  res.json({ ok: true, shop: publicShop(await byId(shop.id)) });
+});
+
 // ── Revenue by tier amélioré (période configurable) ────────────────────────────────
 router.get("/api/v1/admin/revenue-timeseries", requireAdmin, async (req, res) => {
   const period = str(req.query.period) || "30d"; // 7d, 30d, 3m, 12m

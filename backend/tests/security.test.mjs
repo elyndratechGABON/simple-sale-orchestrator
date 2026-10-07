@@ -127,6 +127,38 @@ test("les mots de passe de compte sont comparés par hachage, pas en clair", () 
   assert.match(entry, /await hashPassword\(accPassword\)/, "le re-key doit stocker un condensat");
 });
 
+test("l'empreinte se vérifie AVANT la création du compte", () => {
+  const entry = readFileSync(new URL("../routes/entry.mjs", import.meta.url, import.meta.url), "utf8");
+  // L'ordre est le point charge-bearing : un contrôle d'empreinte placé APRÈS
+  // `createAccount` laisse un compte créé puis un refus 409, soit une boutique invisible
+  // au tableau de bord et un compte fantôme par essai. Le grep échoue bruyamment le jour
+  // où quelqu'un remet le contrôle à sa place d'origine.
+  const start = entry.indexOf('router.post("/api/v1/handshake"');
+  assert.ok(start > 0, "route handshake introuvable");
+  const block = entry.slice(start);
+  const check = block.indexOf("fingerprint_conflict");
+  const create = block.indexOf("createAccount(");
+  assert.ok(check > 0, "le contrôle d'empreinte a disparu du handshake");
+  assert.ok(create > 0, "la création de compte a disparu du handshake");
+  assert.ok(
+    check < create,
+    "le contrôle d'empreinte doit précéder createAccount — sinon un refus 409 crée un compte fantôme",
+  );
+});
+
+test("la route de libération d'empreinte est authentifiée et ne supprime rien", () => {
+  const cc = readFileSync(new URL("../routes/cc.mjs", import.meta.url, import.meta.url), "utf8");
+  const start = cc.indexOf('router.post("/api/v1/admin/shops/:device_id/release-fingerprint"');
+  assert.ok(start > 0, "route de libération d'empreinte introuvable");
+  const block = cc.slice(start, cc.indexOf("\n});", start));
+  assert.match(block, /requireAdmin/, "la libération d'empreinte doit exiger une session admin");
+  // Débloquer ne doit JAMAIS supprimer une boutique ou un compte : on efface le champ,
+  // le commerçant se réenregistre au handshake suivant.
+  assert.ok(!/DELETE FROM/.test(block), "la route ne doit rien supprimer");
+  assert.match(block, /device_fingerprint = NULL/);
+  assert.match(block, /logAdminAction/, "l'action doit laisser une trace d'audit");
+});
+
 test("le relais persiste la signature des opérations", () => {
   const handler = readFileSync(new URL("../../relay/handler.mjs", import.meta.url, import.meta.url), "utf8");
   // Sans `sig` en colonne, le pull rend des ops sans signature et le récepteur — qui
