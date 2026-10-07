@@ -58,6 +58,31 @@ router.post("/api/v1/handshake", async (req, res) => {
   if (!device_id) return res.status(400).json({ error: "device_id requis." });
   const now = Date.now();
 
+  // 0. Empreinte de l'appareil — AVANT toute écriture. « Un appareil physique = une
+  //    boutique » est une règle d'ACCÈS, pas une étape de la création du compte : la
+  //    vérifier au milieu du traitement laissait un compte créé puis un refus 409, soit
+  //    un compte fantôme (aucune boutique, invisible dans le tableau de bord) à chaque
+  //    nouvel essai. Un refus ne doit rien écrire du tout.
+  const device_fingerprint = optStr(body.device_fingerprint);
+  let shop = await byDeviceId(device_id);
+  if (!shop && device_fingerprint) {
+    const clash = await db.get(
+      "SELECT device_id, store_name FROM shops WHERE device_fingerprint = $1",
+      device_fingerprint,
+    );
+    if (clash) {
+      console.warn(
+        `[${new Date().toISOString()}] EMPREINTE refusée : ${device_id} (${device_fingerprint.slice(0, 12)}…) ` +
+          `correspond à « ${clash.store_name} » (${clash.device_id}) — aucun compte créé`,
+      );
+      return res.status(409).json({
+        error: `Cet appareil est déjà enregistré sous la boutique « ${clash.store_name} » (${clash.device_id}). Un seul appareil physique par boutique.`,
+        code: "fingerprint_conflict",
+        existing_device_id: clash.device_id,
+      });
+    }
+  }
+
   // 1. Résolution du compte. Identifiants absents (vieux build) → le compte issu de la
   //    migration est repris tel quel. Téléphone inconnu → création avec essai et plus
   //    petit palier. Mot de passe erroné → refus net : mieux vaut une erreur claire que
@@ -160,10 +185,11 @@ router.post("/api/v1/handshake", async (req, res) => {
   }
 
   // 2. Fiche boutique : mise à jour douce des champs fournis, création si inconnue
-  //    (jamais d'erreur bloquante) — inchangé depuis le v2.
+  //    (jamais d'erreur bloquante) — inchangé depuis le v2. L'empreinte a déjà été
+  //    contrôlée en tête de route (cf. « 0. ») : ici, un `device_id` inconnu qui passe
+  //    la porte est forcément un appareil inédit.
   const app_version_used = optStr(body.app_version);
   const app_origin = str(body.app_origin) || "pos";
-  const device_fingerprint = optStr(body.device_fingerprint);
 
   // Le projet cible est créé s'il n'existe pas : une caisse qui arrive avec un
   // app_origin inconnu est rattachée à un projet auto-créé (mot de passe aléatoire),
@@ -189,7 +215,6 @@ router.post("/api/v1/handshake", async (req, res) => {
 
   const projectCfg = await projectConfig(app_origin);
 
-  let shop = await byDeviceId(device_id);
   if (shop) {
     await db.run(
       `UPDATE shops SET
@@ -214,17 +239,6 @@ router.post("/api/v1/handshake", async (req, res) => {
     );
     shop = await byId(shop.id);
   } else {
-    // Vérification de l'empreinte : un appareil physique ne peut créer qu'une seule boutique.
-    if (device_fingerprint) {
-      const clash = await db.get("SELECT device_id, store_name FROM shops WHERE device_fingerprint = $1", device_fingerprint);
-      if (clash) {
-        return res.status(409).json({
-          error: `Cet appareil est déjà enregistré sous la boutique « ${clash.store_name} » (${clash.device_id}). Un seul appareil physique par boutique.`,
-          code: "fingerprint_conflict",
-          existing_device_id: clash.device_id,
-        });
-      }
-    }
     await db.run(
       `INSERT INTO shops
          (device_id, owner_name, store_name, phone, location, registration_date,
