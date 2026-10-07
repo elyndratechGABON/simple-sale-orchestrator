@@ -3,9 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node index.mjs",
-    "dev": "node --watch index.mjs",
-    "test": "node --test tests/*.test.mjs"
+    "start": "node --env-file-if-exists=.env index.mjs",
+    "dev": "node --env-file-if-exists=.env --watch index.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "build": "node -e \"console.log('backend : rien a compiler (dashboard/dist est versionne, cf. .gitignore)')\""
   },
   "dependencies": {
     "express": "^4.21.2",
