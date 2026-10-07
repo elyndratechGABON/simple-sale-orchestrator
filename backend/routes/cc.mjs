@@ -15,6 +15,7 @@ import {
   str,
   byId,
   byDeviceId,
+  groupShopsByAccount,
   listShops,
   accountById,
   accountDevices,
@@ -313,39 +314,59 @@ router.get("/api/v1/admin/clients/:id", requireAdmin, async (req, res) => {
 });
 
 // ── Boutiques — liste + fiche détaillée ───────────────────────────────────────────
+// L'UNITÉ EST LE COMMERCE. Une fiche `shops` est un écran : sans regroupement, le
+// tableau listait le patron ET chacun de ses employés comme des boutiques distinctes, et
+// le portefeuille comptait 3 boutiques pour un commerce à 3 écrans.
 router.get("/api/v1/admin/shops-detail", requireAdmin, async (req, res) => {
   const session = sessionOf(req);
   const origin = session.scope === "project" ? session.project : str(req.query.project) || null;
   const now = Date.now();
 
   const shops = await Promise.all(
-    (await listShops(origin)).map(async (s) => {
-      const account = s.account_id ? await accountById(s.account_id) : null;
+    groupShopsByAccount(await listShops(origin)).map(async (group) => {
+      const devices = group.devices;
+      const premier = devices[0];
+      const account = group.account_id ? await accountById(group.account_id) : null;
       const resolvedAccount = account ? await resolveAccount(account) : null;
       const accountDevicesList = resolvedAccount ? await accountDevices(resolvedAccount.id) : [];
       return {
-        id: s.id,
-        device_id: s.device_id,
-        store_name: s.store_name,
-        owner_name: s.owner_name,
-        phone: s.phone ?? null,
-        location: s.location ?? null,
-        registration_date: s.registration_date,
-        expiry_date: s.expiry_date,
-        suspended_at: s.suspended_at ?? null,
-        app_version_used: s.app_version_used ?? null,
-        app_origin: s.app_origin ?? "pos",
-        last_sync_at: s.last_sync_at ?? null,
-        account_id: s.account_id ?? null,
+        id: premier.id,
+        device_id: premier.device_id,
+        store_name: resolvedAccount?.name ?? premier.store_name,
+        owner_name: resolvedAccount?.owner_name || premier.owner_name,
+        phone: premier.phone ?? null,
+        location: premier.location ?? null,
+        registration_date: Math.min(...devices.map((d) => d.registration_date)),
+        expiry_date: premier.expiry_date,
+        // Le commerce est suspendu si l'UN de ses écrans l'est — pas une date
+        // inventée : c'est l'écran lui-même qui porte la suspension.
+        suspended_at: devices.find((d) => d.suspended_at)?.suspended_at ?? null,
+        app_version_used: premier.app_version_used ?? null,
+        app_origin: premier.app_origin ?? "pos",
+        last_sync_at: devices.reduce((m, d) => (d.last_sync_at && d.last_sync_at > m ? d.last_sync_at : m), 0) || null,
+        account_id: group.account_id ?? null,
         account_name: resolvedAccount?.name ?? null,
         // Abonnement du compte marchand : palier (nom) et écrans utilisés / total.
         plan_name: resolvedAccount ? planNameForDevices(resolvedAccount.max_devices) : null,
         plan_price_fcfa: resolvedAccount ? priceForDevices(resolvedAccount.max_devices) : null,
         account_device_count: accountDevicesList.length,
         account_max_devices: resolvedAccount?.max_devices ?? null,
-        status: computeStatus(s),
-        payments: s.payments,
-        online: s.last_sync_at ? now - s.last_sync_at < ONLINE_WINDOW_MS : false,
+        // Le statut du COMMERCE vient du compte : c'est lui qui est abonné, suspendu ou
+        // expiré. L'écran ne sert que quand il n'y a pas de compte.
+        status: resolvedAccount ? computeAccountStatus(resolvedAccount) : computeStatus(premier),
+        payments: devices.reduce((n, d) => n + Number(d.payments || 0), 0),
+        online: devices.some((d) => d.last_sync_at && now - d.last_sync_at < ONLINE_WINDOW_MS),
+        // Les écrans du commerce : c'est ici qu'un employé apparaît, comme poste.
+        devices: devices.map((d) => ({
+          device_id: d.device_id,
+          store_name: d.store_name,
+          owner_name: d.owner_name,
+          status: d.suspended_at ? "suspended" : computeStatus(d),
+          suspended_at: d.suspended_at ?? null,
+          online: !!(d.last_sync_at && now - d.last_sync_at < ONLINE_WINDOW_MS),
+          last_sync_at: d.last_sync_at ?? null,
+          app_version_used: d.app_version_used ?? null,
+        })),
       };
     }),
   );

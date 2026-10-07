@@ -59,6 +59,32 @@ export const listShops = (origin) =>
     ...(origin ? [origin] : []),
   );
 
+/**
+ * Regroupe les ÉCRANS par COMMERCE (compte marchand).
+ *
+ * ⚠️ Une fiche `shops` est un ÉCRAN, pas une boutique. Le téléphone d'un employé est une
+ * ligne de la boutique de son patron, pas un second commerce : compter les écrans comme
+ * des boutiques gonflait le portefeuille (3 écrans pour une boutique à 3 écrans) et
+ * affichait l'employé comme un deuxième commerçant — ce qu'il n'a jamais été.
+ *
+ * L'ordre suit celui de `listShops` (échéance la plus proche d'abord) ; les écrans d'un
+ * commerce sont rendus du plus ancien au plus récent. Un écran SANS compte reste sa propre
+ * ligne : on ne le range pas sous une boutique à laquelle il n'appartient pas.
+ */
+export function groupShopsByAccount(shops) {
+  const groups = new Map();
+  for (const s of shops) {
+    const key = s.account_id != null ? `account:${s.account_id}` : `device:${s.id}`;
+    const existing = groups.get(key);
+    if (existing) existing.devices.push(s);
+    else groups.set(key, { account_id: s.account_id ?? null, devices: [s] });
+  }
+  return [...groups.values()].map((g) => ({
+    account_id: g.account_id,
+    devices: g.devices.sort((a, b) => a.registration_date - b.registration_date),
+  }));
+}
+
 // ── Comptes marchands ──────────────────────────────────────────────────────────────
 export const accountById = (id) => db.get("SELECT * FROM accounts WHERE id = $1", id);
 export const accountByPhone = (phone) =>

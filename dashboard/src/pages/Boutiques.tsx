@@ -10,6 +10,7 @@ import {
 import { fmtDate, fmtDateTime, fmtFcfa, statusBadge } from "../utils";
 import { InboxIcon } from "../icons";
 import { DataTable } from "../components/ui/DataTable";
+import { OnlineDot } from "../components/ui/OnlineDot";
 
 type Props = {
   onSelect: (deviceId: string) => void;
@@ -192,10 +193,27 @@ export function Boutiques({ onSelect }: Props) {
                 ),
             },
             {
-              key: "device_id",
-              label: "Appareil",
-              className: "cell-device",
-              render: (s: ShopDetail) => <span className="mono">{s.device_id}</span>,
+              key: "devices",
+              label: "Écrans",
+              // Le patron et ses employés sont des POSTES de cette boutique, pas des
+              // boutiques : ils sont listés ici, dans leur ligne, et cliquables
+              // individuellement (le détail reste une fiche d'écran).
+              render: (s: ShopDetail) => (
+                <div className="space-y-1">
+                  {(s.devices ?? [{ device_id: s.device_id, store_name: s.store_name, online: s.online, last_sync_at: s.last_sync_at }]).map((d) => (
+                    <div key={d.device_id} className="flex items-center gap-1.5">
+                      <OnlineDot online={d.online} />
+                      <button
+                        className="mono underline-offset-2 hover:underline"
+                        onClick={() => onSelect(d.device_id)}
+                        title={`Détail de l'écran ${d.store_name}`}
+                      >
+                        {d.store_name || d.device_id.slice(0, 8)}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ),
             },
             { key: "status", label: "Statut", render: (s: ShopDetail) => statusBadge(s.status) },
             {

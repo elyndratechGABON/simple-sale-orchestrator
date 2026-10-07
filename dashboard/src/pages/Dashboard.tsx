@@ -2,24 +2,7 @@ import { useEffect, useState } from "react";
 import { fetchStorefront, fetchRevenueTimeseries, fetchRevenueSummary, type Storefront, type RevenueTimeseries, type RevenueSummary, type StorefrontShop } from "../api";
 import { fmtDate, fmtFcfa, statusBadge } from "../utils";
 import { TrendingUpIcon, ChartIcon } from "../icons";
-
-function OnlineDot({ online }: { online: boolean }) {
-  return (
-    <span title={online ? "En ligne" : "Hors ligne"}>
-      <span
-        style={{
-          display: "inline-block",
-          width: 8,
-          height: 8,
-          borderRadius: 8,
-          marginRight: 6,
-          background: online ? "#16a34a" : "#9ca3af",
-        }}
-      />
-      {online ? "En ligne" : "Hors ligne"}
-    </span>
-  );
-}
+import { OnlineDot } from "../components/ui/OnlineDot";
 
 export function Dashboard() {
   const [sf, setSf] = useState<Storefront | null>(null);
@@ -159,12 +142,19 @@ export function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {shops.map((s: StorefrontShop) => (
+{shops.map((s: StorefrontShop) => (
                   <tr key={s.device_id}>
                     <td>
                       <div className="cell-store">
-                        <strong>{s.store_name || "\u2014"}</strong>
-                        <div className="meta">{s.owner_name || s.phone || "\u2014"}</div>
+                        {/* Le COMMERCE en titre, ses écrans dessous : c'est ce qui
+                            distingue « une boutique à 3 écrans » de « 3 boutiques ». */}
+                        <strong>{s.account_name || s.store_name || "—"}</strong>
+                        <div className="meta">
+                          {s.owner_name || s.phone || "—"}
+                          {(s.devices?.length ?? 0) > 1 && (
+                            <span> · {(s.devices ?? []).map((d) => d.store_name).filter(Boolean).join(", ")}</span>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td>

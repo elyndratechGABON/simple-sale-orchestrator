@@ -194,6 +194,41 @@ test("la limitation de débit bloque l'énumération de mots de passe", async ()
   assert.equal(locked("5.6.7.8"), false, "une autre IP n'est pas affectée");
 });
 
+test("une boutique = UN commerce, même avec trois écrans", async () => {
+  // L'unité du tableau de bord est le COMPTE, pas la fiche de caisse : sans ce
+  // regroupement, une boutique à trois écrans comptait trois boutiques et le portefeuille
+  // était gonflé d'autant — le téléphone d'un employé affiché comme un deuxième commerce.
+  const ecran = (id, accountId, registration) => ({
+    id,
+    account_id: accountId,
+    registration_date: registration,
+    store_name: `écran ${id}`,
+  });
+
+  const groupes = lib.groupShopsByAccount([
+    ecran(1, 63, 300),
+    ecran(2, 63, 100), // le patron arrive après son employé dans la liste
+    ecran(3, 63, 200),
+    ecran(4, 59, 400), // un autre commerce
+    ecran(5, null, 500), // écran jamais rattaché à un compte
+  ]);
+
+  assert.equal(groupes.length, 3, "3 commerces : le compte 63, le compte 59, l'écran orphelin");
+  const [commerce63, commerce59, orphelin] = groupes;
+  assert.equal(commerce63.account_id, 63);
+  assert.equal(commerce63.devices.length, 3, "les trois écrans d'un compte forment UN commerce");
+  // Les écrans du commerce sont rendus du plus ancien au plus récent.
+  assert.deepEqual(
+    commerce63.devices.map((d) => d.registration_date),
+    [100, 200, 300],
+  );
+  assert.equal(commerce59.devices.length, 1);
+  // Un écran sans compte reste SA ligne : on ne le range pas sous une boutique qui n'est
+  // pas la sienne.
+  assert.equal(orphelin.account_id, null);
+  assert.equal(orphelin.devices.length, 1);
+});
+
 test("le hachage résiste à la comparaison par égalité simple", () => {
   // Rappel du critère : deux hachages du même mot de passe ne doivent PAS être égaux,
   // sinon une base compromise se prête à une recherche par dictionnaire direct.

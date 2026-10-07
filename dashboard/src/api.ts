@@ -244,7 +244,21 @@ export interface SmsPayment {
   matched_account_name: string | null;
 }
 
+/** Un ÉCRAN d'un commerce. Ce n'est pas une boutique : c'est un poste (celui du
+ *  patron, celui d'un employé). */
+export interface StorefrontDevice {
+  device_id: string;
+  store_name: string;
+  owner_name: string;
+  online: boolean;
+  status: string;
+  last_sync_at: number | null;
+  app_version_used: string | null;
+}
+
+/** Une LIGNE = un commerce (compte marchand), avec ses écrans. */
 export interface StorefrontShop {
+  /** Premier écran du commerce — clé stable du drill-down, pas l'identité de la ligne. */
   device_id: string;
   store_name: string;
   owner_name: string;
@@ -256,6 +270,7 @@ export interface StorefrontShop {
   account_name: string | null;
   plan_name: string | null;
   plan_price_fcfa: number | null;
+  /** Écrans du commerce, comparés aux places payées. */
   device_count: number;
   max_devices: number;
   over_limit: boolean;
@@ -263,6 +278,7 @@ export interface StorefrontShop {
   ca_month_fcfa: number;
   ca_30d_fcfa: number;
   elyndra_month_fcfa: number;
+  devices: StorefrontDevice[];
 }
 
 export interface Storefront {
@@ -277,6 +293,8 @@ export interface Storefront {
     suspendues: number;
     expirees: number;
     employees: number;
+    /** Écrans tous comptes faits : l'unité des employés, pas des boutiques. */
+    devices_total?: number;
   };
   elyndra: {
     mois_encaisse: number;
@@ -346,8 +364,21 @@ export interface ClientDetail {
   activity: any[];
 }
 
+export interface ShopDevice {
+  device_id: string;
+  store_name: string;
+  owner_name: string;
+  status: string;
+  online: boolean;
+  last_sync_at: number | null;
+  app_version_used: string | null;
+}
+
+/** Une LIGNE = un commerce (compte marchand). `devices` liste ses écrans — le patron et
+ *  ses employés : autant de postes, UNE seule boutique. */
 export interface ShopDetail {
   id: number;
+  /** Premier écran du commerce — clé du drill-down. */
   device_id: string;
   store_name: string;
   owner_name: string;
@@ -368,6 +399,7 @@ export interface ShopDetail {
   status: string;
   payments: number;
   online: boolean;
+  devices?: ShopDevice[];
 }
 
 export interface ShopFull {

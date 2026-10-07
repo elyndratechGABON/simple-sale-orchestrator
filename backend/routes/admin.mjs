@@ -18,6 +18,7 @@ import {
   str,
   byId,
   byDeviceId,
+  groupShopsByAccount,
   listShops,
   accountById,
   accountDevices,
@@ -989,11 +990,19 @@ router.get("/api/v1/admin/storefront", requireAdmin, async (req, res) => {
     sumByDevice(dayStart),
   ]);
 
+  // Une LIGNE PAR COMMERCE. Le téléphone d'un employé est un poste de la boutique de son
+  // patron, pas une boutique : on regroupait les écrans et tout ce qui suit — compteurs,
+  // CA, revenu Elyndra — comptait un commerce trois fois quand il a trois écrans.
   const shopRows = await Promise.all(
-    shops.map(async (s) => {
-      const account = s.account_id ? await accountById(s.account_id) : null;
-      const devices = account ? await accountDevices(account.id) : null;
-      const overLimit = account ? await deviceOverLimit(account, s.device_id) : false;
+    groupShopsByAccount(shops).map(async (group) => {
+      const devices = group.devices;
+      const premier = devices[0];
+      const account = group.account_id ? await accountById(group.account_id) : null;
+      const inscrites = account ? await accountDevices(account.id) : null;
+      // Un commerce est « hors quota » quand ses écrans dépassent les places payées.
+      const overLimit = account
+        ? inscrites.length > account.max_devices
+        : false;
       // Nom commercial dérivé du PALIER facturé (cf. PRICE_TIERS), pas du nombre d'écrans
       // exact : un compte à 10 000 F/mois est « Essentiel » même avec 2 écrans inscrits.
       const paid = account ? priceForDevices(account.max_devices) : null;
@@ -1001,34 +1010,58 @@ router.get("/api/v1/admin/storefront", requireAdmin, async (req, res) => {
       const plan = account
         ? planNameForDevices(tierAtPrice ? tierAtPrice.devices : account.max_devices) ?? "Sur mesure"
         : null;
+      const ca = (m) => devices.reduce((s, d) => s + (m.get(d.device_id) ?? 0), 0);
+      const online = devices.some(
+        (d) => d.last_sync_at && now - d.last_sync_at < ONLINE_WINDOW_MS,
+      );
+      const lastSyncAt = devices.reduce(
+        (max, d) => (d.last_sync_at && d.last_sync_at > max ? d.last_sync_at : max),
+        0,
+      );
       return {
-        device_id: s.device_id,
-        store_name: s.store_name,
-        owner_name: s.owner_name,
-        phone: s.phone ?? null,
-        last_sync_at: s.last_sync_at ?? null,
-        online: !!(s.last_sync_at && now - s.last_sync_at < ONLINE_WINDOW_MS),
-        status: overLimit ? "over_limit" : account ? computeAccountStatus(account) : computeStatus(s),
+        // `device_id` : le premier écran du commerce — la fiche détail reste par écran,
+        // c'est la clé stable dont le dashboard se sert pour le drill-down.
+        device_id: premier.device_id,
+        store_name: account?.name ?? premier.store_name,
+        owner_name: account?.owner_name || premier.owner_name,
+        phone: account?.phone ?? premier.phone ?? null,
+        last_sync_at: lastSyncAt || null,
+        online,
+        status: overLimit
+          ? "over_limit"
+          : account
+            ? computeAccountStatus(account)
+            : computeStatus(premier),
         account_id: account?.id ?? null,
         account_name: account?.name ?? null,
         // L'abonnement du compte : places achetées, écrans réellement inscrits et revenu
         // mensuel que cette souscription rapporte à Elyndra.
         plan_name: plan,
         plan_price_fcfa: paid,
-        device_count: devices?.length ?? 1,
+        device_count: devices.length,
+        registered_devices: inscrites?.length ?? devices.length,
         max_devices: account?.max_devices ?? 1,
         over_limit: overLimit,
-        ca_today_fcfa: caToday.get(s.device_id) ?? 0,
-        ca_month_fcfa: caMonth.get(s.device_id) ?? 0,
-        ca_30d_fcfa: ca30d.get(s.device_id) ?? 0,
+        ca_today_fcfa: ca(caToday),
+        ca_month_fcfa: ca(caMonth),
+        ca_30d_fcfa: ca(ca30d),
         elyndra_month_fcfa: paid ?? 0,
+        // Les écrans du commerce, pour les voir sans compter autant de boutiques.
+        devices: devices.map((d) => ({
+          device_id: d.device_id,
+          store_name: d.store_name,
+          owner_name: d.owner_name,
+          online: !!(d.last_sync_at && now - d.last_sync_at < ONLINE_WINDOW_MS),
+          status: computeStatus(d),
+          last_sync_at: d.last_sync_at ?? null,
+          app_version_used: d.app_version_used ?? null,
+        })),
       };
     }),
   );
 
-  // KPI boutiques — comptés PAR BOUTIQUE (une fiche de caisse = une boutique). « Rayées »
-  // = suspendues + expirées : celles qui ne peuvent plus encaisser. `employes` = écrans
-  // au-delà du fondateur (n-1 par compte multi-écrans).
+  // KPI — l'unité est le COMMERCE. `employees` reste, lui, un compteur d'ÉCRANS : c'est
+  // exactement ce qu'il doit dire (le nombre de postes occupés au-delà du fondateur).
   const statusCount = { active: 0, grace: 0, suspended: 0, expired: 0 };
   for (const r of shopRows) statusCount[r.status] = (statusCount[r.status] ?? 0) + 1;
   let employes = 0;
@@ -1038,14 +1071,16 @@ router.get("/api/v1/admin/storefront", requireAdmin, async (req, res) => {
   }
   const enLigne = shopRows.filter((r) => r.online).length;
   const kpi = {
-    boutique_total: shops.length,
+    boutique_total: shopRows.length,
     boutique_active: statusCount.active,
     en_ligne: enLigne,
-    hors_ligne: shops.length - enLigne,
+    hors_ligne: shopRows.length - enLigne,
     en_grace: statusCount.grace,
     suspendues: statusCount.suspended,
     expirees: statusCount.expired,
     employees: employes,
+    // Écrans, pour ne plus avoir à les déduire du nombre de boutiques.
+    devices_total: shops.length,
   };
 
   // Rentrée Elyndra. `mois_encaisse` = paiements reçus depuis le 1er du mois civil
