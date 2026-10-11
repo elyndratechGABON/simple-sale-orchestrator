@@ -133,7 +133,19 @@ router.post("/api/v1/handshake", async (req, res) => {
         );
         account = memberAccount;
       } else {
-        return res.status(403).json({ error: "Mot de passe du compte incorrect.", code: "account_password" });
+        // NOUVEAU : si un pair_code est fourni (scan QR proprio), auto-bénédiction
+        // au lieu de rejeter — l'employé a scanné le QR du proprio.
+        const pairCode = str(body.pair_code);
+        if (pairCode) {
+          await deviceBlessing(device_id, memberAccount.id, null);
+          account = memberAccount;
+          await upsertDeviceCredential(device_id, account.id);
+          console.log(
+            `[${new Date().toISOString()}] AUTO-BÉNÉDICTION (re-key) : écran ${device_id} approuvé via pair_code pour compte « ${memberAccount.name} »`,
+          );
+        } else {
+          return res.status(403).json({ error: "Mot de passe du compte incorrect.", code: "account_password" });
+        }
       }
     } else {
       // Le mot de passe se valide sur le compte présenté (la redirection garde ses
