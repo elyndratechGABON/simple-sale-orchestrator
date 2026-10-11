@@ -13,6 +13,7 @@ import {
   GRACE_PERIOD_MS,
   DAY_MS,
   SMS_WEBHOOK_TOKEN,
+  OPS_RELAY_URL,
 } from "../config.mjs";
 import {
   str,
@@ -366,6 +367,8 @@ router.post("/api/v1/handshake", async (req, res) => {
     sync_allowed: effective === "active" || effective === "grace",
     over_limit: overLimit,
     ...(overLimit ? { reason: "device_limit" } : {}),
+    // URL du relais P2P (ops) — le client s'en sert pour push/pull les ops (stock, ventes).
+    ops_relay_url: OPS_RELAY_URL,
     // Le mot clé de récupération n'est renvoyé QU'AU MOMENT DE LA CRÉATION : l'écran qui
     // vient d'inscrire le compte est le seul qui le voit — il doit le conserver. Les
     // handshakes suivants ne le redonnent jamais.
