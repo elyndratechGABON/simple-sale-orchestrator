@@ -312,3 +312,20 @@ CREATE TABLE IF NOT EXISTS sms_payments (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sms_payments_tid ON sms_payments (tid);
 CREATE INDEX IF NOT EXISTS idx_sms_payments_status ON sms_payments (status, created_at);
+
+-- Version 22 — demandes de catalogue en attente de confirmation du propriétaire.
+-- Quand un employé clique "Importer le stock du propriétaire", une op `catalogue.request`
+-- est envoyée. Le propriétaire doit confirmer avant que le snapshot ne soit envoyé.
+-- Ce store trace les demandes en attente : `status` = pending | confirmed | denied | expired.
+CREATE TABLE IF NOT EXISTS catalogue_requests (
+  id                TEXT PRIMARY KEY,      -- id de l'op catalogue.request (ex: "dev_abc:5")
+  shop_id           TEXT NOT NULL,         -- groupe de partage (s_...)
+  requester_id      TEXT NOT NULL,         -- device_id de l'employé demandeur
+  status            TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'confirmed', 'denied', 'expired')),
+  created_at        BIGINT NOT NULL,
+  confirmed_at      BIGINT,
+  denied_at         BIGINT,
+  snapshot_sent     BIGINT NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_catalogue_requests_shop ON catalogue_requests (shop_id, status, created_at);
