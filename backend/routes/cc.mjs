@@ -374,6 +374,44 @@ router.get("/api/v1/admin/shops-detail", requireAdmin, async (req, res) => {
   res.json({ shops });
 });
 
+// ── Hiérarchie Abonnement → Propriétaire + Employés ─────────────────────────────────
+// Une ligne par abonnement (compte marchand) avec l'id du propriétaire (écran le plus
+// ancien) et la liste des ids employés (autres écrans). Clair pour ranger / filtrer.
+router.get("/api/v1/admin/subscriptions", requireAdmin, async (req, res) => {
+  const session = sessionOf(req);
+  const origin = session.scope === "project" ? session.project : str(req.query.project) || null;
+  const shops = await listShops(origin);
+  const rows = await db.all("SELECT * FROM accounts WHERE merged_into IS NULL");
+  const accounts = [];
+  for (const a of rows) {
+    if (await accountOriginOk(a, origin)) accounts.push(a);
+  }
+
+  const subs = await Promise.all(
+    accounts.map(async (account) => {
+      const deviceIds = await accountDevices(account.id);
+      // Le propriétaire = premier écran enregistré (le plus ancien)
+      const sorted = deviceIds.sort((a, b) => a.registration_date - b.registration_date);
+      const owner = sorted[0] ?? null;
+      const employees = sorted.slice(1);
+      return {
+        subscription_id: account.id,
+        subscription_name: account.name,
+        owner_device_id: owner?.device_id ?? null,
+        owner_store_name: owner?.store_name ?? null,
+        employee_device_ids: employees.map((d) => d.device_id),
+        employee_store_names: employees.map((d) => d.store_name),
+        all_device_ids: sorted.map((d) => d.device_id),
+        max_devices: account.max_devices,
+        plan_name: planNameForDevices(account.max_devices),
+        status: computeAccountStatus(account),
+      };
+    }),
+  );
+
+  res.json({ subscriptions: subs });
+});
+
 // ── Fiche boutique détaillée ───────────────────────────────────────────────────────
 router.get("/api/v1/admin/shops-detail/:device_id", requireAdmin, async (req, res) => {
   const device_id = str(req.params.device_id);
