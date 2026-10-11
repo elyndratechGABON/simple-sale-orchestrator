@@ -41,7 +41,6 @@ import {
   deviceBlessing,
   deviceBlessingByDevice,
   deviceBlessingsForAccount,
-  upsertDeviceCredential,
 } from "../lib.mjs";
 import { broadcastStatus, broadcastRequest } from "./auth.mjs";
 import { parseSms } from "../sms-parser.mjs";
@@ -139,7 +138,6 @@ router.post("/api/v1/handshake", async (req, res) => {
         if (pairCode) {
           await deviceBlessing(device_id, memberAccount.id, null);
           account = memberAccount;
-          await upsertDeviceCredential(device_id, account.id);
           console.log(
             `[${new Date().toISOString()}] AUTO-BÉNÉDICTION (re-key) : écran ${device_id} approuvé via pair_code pour compte « ${memberAccount.name} »`,
           );
@@ -202,7 +200,6 @@ router.post("/api/v1/handshake", async (req, res) => {
       if (ownerAcc) {
         await deviceBlessing(device_id, ownerAcc.id, null);
         account = await resolveAccount(ownerAcc);
-        await upsertDeviceCredential(device_id, account.id);
         pendingBlessing = false;
         console.log(
           `[${new Date().toISOString()}] AUTO-BÉNÉDICTION : écran ${device_id} approuvé via pair_code pour compte « ${ownerAcc.name} »`,
