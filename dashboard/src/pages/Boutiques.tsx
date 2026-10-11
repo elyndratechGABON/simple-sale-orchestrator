@@ -4,6 +4,8 @@ import {
   fetchDeleteRequests,
   approveDeleteRequest,
   rejectDeleteRequest,
+  deleteShop,
+  deleteAccount,
   type ShopDetail,
   type DeleteRequest,
 } from "../api";
@@ -23,6 +25,7 @@ export function Boutiques({ onSelect }: Props) {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -72,6 +75,39 @@ export function Boutiques({ onSelect }: Props) {
       setError(err instanceof Error ? err.message : "Erreur.");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleDeleteDevice = async (deviceId: string, storeName: string) => {
+    if (!window.confirm(`Supprimer l'écran « ${storeName} » ? Cette action est irréversible.`)) return;
+    setDeleting(deviceId);
+    try {
+      await deleteShop(deviceId);
+      setNotice(`Écran « ${storeName} » supprimé.`);
+      const shopRes = await fetchShopsDetail();
+      setShops(shopRes.shops);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erreur lors de la suppression.");
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  const handleDeleteAccount = async (accountId: number, accountName: string) => {
+    if (!window.confirm(
+      `Supprimer TOUTE la boutique « ${accountName} » (compte + tous ses écrans) ?\n` +
+      `Cette action est IRRÉVERSIBLE : toutes les ventes, le stock et l'historique seront perdus.`
+    )) return;
+    setDeleting(`account-${accountId}`);
+    try {
+      await deleteAccount(accountId);
+      setNotice(`Boutique « ${accountName} » supprimée.`);
+      const shopRes = await fetchShopsDetail();
+      setShops(shopRes.shops);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erreur lors de la suppression.");
+    } finally {
+      setDeleting(null);
     }
   };
 
@@ -195,9 +231,6 @@ export function Boutiques({ onSelect }: Props) {
             {
               key: "devices",
               label: "Écrans",
-              // Le patron et ses employés sont des POSTES de cette boutique, pas des
-              // boutiques : ils sont listés ici, dans leur ligne, et cliquables
-              // individuellement (le détail reste une fiche d'écran).
               render: (s: ShopDetail) => (
                 <div className="space-y-1">
                   {(s.devices ?? [{ device_id: s.device_id, store_name: s.store_name, online: s.online, last_sync_at: s.last_sync_at }]).map((d) => (
@@ -209,6 +242,15 @@ export function Boutiques({ onSelect }: Props) {
                         title={`Détail de l'écran ${d.store_name}`}
                       >
                         {d.store_name || d.device_id.slice(0, 8)}
+                      </button>
+                      <button
+                        className="btn btn-ghost btn-xs text-destructive hover:text-destructive opacity-0 group-hover:opacity-100"
+                        onClick={() => handleDeleteDevice(d.device_id, d.store_name || d.device_id.slice(0, 8))}
+                        disabled={deleting === d.device_id || busy}
+                        title="Supprimer cet écran"
+                        aria-label={`Supprimer l'écran ${d.store_name || d.device_id.slice(0, 8)}`}
+                      >
+                        {deleting === d.device_id ? "⏳" : "🗑"}
                       </button>
                     </div>
                   ))}
@@ -226,13 +268,25 @@ export function Boutiques({ onSelect }: Props) {
               label: "Derni\u00e8re sync",
               render: (s: ShopDetail) => <span className="mono">{fmtDateTime(s.last_sync_at)}</span>,
             },
-            {
+{
               key: "actions",
               label: "",
               render: (s: ShopDetail) => (
-                <button className="btn btn-sm" onClick={() => onSelect(s.device_id)}>
-                  D\u00e9tails
-                </button>
+                <div className="flex items-center gap-1.5">
+                  <button className="btn btn-sm" onClick={() => onSelect(s.device_id)}>
+                    Détails
+                  </button>
+                  {s.account_id != null && (
+                    <button
+                      className="btn btn-sm btn-ghost text-destructive hover:text-destructive"
+                      onClick={() => handleDeleteAccount(s.account_id, s.account_name || `compte #${s.account_id}`)}
+                      disabled={deleting === `account-${s.account_id}` || busy}
+                      title="Supprimer toute la boutique (compte + tous ses écrans)"
+                    >
+                      {deleting === `account-${s.account_id}` ? "⏳" : "🗑"}
+                    </button>
+                  )}
+                </div>
               ),
             },
           ]}

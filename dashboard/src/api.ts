@@ -660,6 +660,10 @@ export function deleteShop(deviceId: string): Promise<{ ok: boolean; device_id: 
   return request(`/api/v1/admin/shops/${encodeURIComponent(deviceId)}`, { method: "DELETE" });
 }
 
+export function deleteAccount(accountId: number): Promise<{ ok: boolean; account_id: number }> {
+  return request(`/api/v1/admin/accounts/${accountId}`, { method: "DELETE" });
+}
+
 export function fetchProjects(): Promise<{ projects: Project[] }> {
   return request("/api/v1/admin/projects");
 }

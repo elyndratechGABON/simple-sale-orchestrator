@@ -731,6 +731,23 @@ router.delete("/api/v1/admin/shops/:device_id", requireAdmin, async (req, res) =
   res.json({ ok: true, device_id });
 });
 
+// Supprimer un compte marchand complet (boutique + tous ses écrans).
+// Réservé à l'admin master (scope master), car c'est une action destructrice majeure.
+router.delete("/api/v1/admin/accounts/:account_id", requireAdmin, async (req, res) => {
+  if (sessionOf(req).scope !== "master") {
+    return res.status(403).json({ error: "Réservé à l'administrateur principal." });
+  }
+  const account_id = Number(req.params.account_id);
+  if (!Number.isFinite(account_id)) return res.status(400).json({ error: "ID compte invalide." });
+  const account = await accountById(account_id);
+  if (!account) return res.status(404).json({ error: "Compte introuvable." });
+  await deleteAccountCompletely(account_id);
+  await logAdminAction(req, "account", String(account_id), "delete", str(req.body?.reason));
+  await logActivity("error", "account", "Compte marchand supprimé", `"${account.name}" (id=${account_id})`, { reason: str(req.body?.reason) ?? null }, null, account_id);
+  console.log(`[${new Date().toISOString()}] COMPTE MARCHAND SUPPRIMÉ "${account.name}" (id=${account_id})`);
+  res.json({ ok: true, account_id });
+});
+
 // Par la caisse elle-même, depuis Paramètres. Lien faible mais suffisant : elle prouve
 // qu'elle connaît son device_id ET le nom de boutique que le serveur a enregistré.
 router.delete("/api/v1/shops/:device_id", async (req, res) => {
