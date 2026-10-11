@@ -165,22 +165,40 @@ router.post("/api/v1/handshake", async (req, res) => {
 
   // 1 ter. Résolution par LIEN de partage (jeton relay + bénédiction propriétaire) :
   // l'écran invité présente account_phone SANS mot de passe. S'il a déjà été
-  // bénédictionné, on authentifie et on génère un secret par-appareil. Sinon on
-  // marque le lien en attente (pending_blessing) — aucun compte hérité n'est créé.
+  // bénédictionné, on authentifie et on génère un secret par-appareil.
+  // NOUVEAU : si un pair_code valide est fourni (QR propriétaire scanné),
+  // on auto-bénédictionne l'employé — plus de pending_blessing.
   if (!account && accPhone && !accPassword) {
+    const pairCode = str(body.pair_code);
+
+    // 1. Bénédiction existante pour cet appareil ?
     const blessing = await deviceBlessingByDevice(device_id);
     if (blessing) {
       const ownerAcc = await accountById(blessing.account_id);
       if (ownerAcc) {
         account = await resolveAccount(ownerAcc);
         await upsertDeviceCredential(device_id, account.id);
-        // les handshakes suivants s'authentifient via ce secret
         pendingBlessing = false;
         console.log(
           `[${new Date().toISOString()}] LIEN accepté : écran ${device_id} rattaché au compte « ${account.name} » (#${account.id})`,
         );
       }
-    } else {
+    }
+    // 2. pair_code fourni + compte identifiable par téléphone = auto-bénédiction immédiate
+    else if (pairCode) {
+      const ownerAcc = await accountByPhone(accPhone);
+      if (ownerAcc) {
+        await deviceBlessing(device_id, ownerAcc.id, null);
+        account = await resolveAccount(ownerAcc);
+        await upsertDeviceCredential(device_id, account.id);
+        pendingBlessing = false;
+        console.log(
+          `[${new Date().toISOString()}] AUTO-BÉNÉDICTION : écran ${device_id} approuvé via pair_code pour compte « ${ownerAcc.name} »`,
+        );
+      }
+    }
+    // 3. Sinon attente d'approbation manuelle
+    else {
       pendingBlessing = true;
     }
   }
