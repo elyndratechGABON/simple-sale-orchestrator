@@ -58,30 +58,59 @@ router.post("/api/v1/handshake", async (req, res) => {
   if (!device_id) return res.status(400).json({ error: "device_id requis." });
   const now = Date.now();
 
-  // 0. Empreinte de l'appareil — AVANT toute écriture. « Un appareil physique = une
-  //    boutique » est une règle d'ACCÈS, pas une étape de la création du compte : la
-  //    vérifier au milieu du traitement laissait un compte créé puis un refus 409, soit
-  //    un compte fantôme (aucune boutique, invisible dans le tableau de bord) à chaque
-  //    nouvel essai. Un refus ne doit rien écrire du tout.
+  // 0. Empreinte de l'appareil — « un appareil physique = une boutique » est une règle
+  //    d'ACCÈS, pas une étape de la création du compte : chaque chemin de résolution
+  //    l'applique AVANT d'écrire (création de compte, fiche boutique), pour qu'un refus
+  //    ne laisse ni compte fantôme ni fiche orpheline. La règle distingue les deux
+  //    cas légitimes de réclamation d'une empreinte déjà posée :
+  //    — l'écran revient au COMPTE de la fiche contradictoire (réinstallation, même
+  //      équipe) : passe ;
+  //    — la fiche contradictoire est un EMPLOYÉ (non fondateur de son compte) : son
+  //      poste d'empreinte est libéré (device_fingerprint NULL) et la réclamation
+  //      passe — réinstaller doit permettre de rejoindre une autre boutique, pas
+  //      rester muré pour toujours sur son ancien poste.
+  //    Seul le FONDATEUR (écran le plus ancien du compte) fait mur d'un compte rival :
+  //    refus 409 net, rien d'écrit.
   const device_fingerprint = optStr(body.device_fingerprint);
-  let shop = await byDeviceId(device_id);
-  if (!shop && device_fingerprint) {
+  const fingerprintBlock = async (deviceId, fingerprint, presentedAccount) => {
+    if (!fingerprint) return null;
+    const known = await byDeviceId(deviceId);
+    if (known) return null;
     const clash = await db.get(
-      "SELECT device_id, store_name FROM shops WHERE device_fingerprint = $1",
-      device_fingerprint,
+      "SELECT device_id, store_name, account_id FROM shops WHERE device_fingerprint = $1",
+      fingerprint,
     );
-    if (clash) {
-      console.warn(
-        `[${new Date().toISOString()}] EMPREINTE refusée : ${device_id} (${device_fingerprint.slice(0, 12)}…) ` +
-          `correspond à « ${clash.store_name} » (${clash.device_id}) — aucun compte créé`,
+    if (!clash) return null;
+    if (presentedAccount && clash.account_id === presentedAccount.id) return null;
+    if (clash.account_id) {
+      const anchor = await db.get(
+        "SELECT device_id FROM shops WHERE account_id = $1 ORDER BY registration_date ASC LIMIT 1",
+        clash.account_id,
       );
-      return res.status(409).json({
+      if (anchor && anchor.device_id !== clash.device_id) {
+        await db.run(
+          "UPDATE shops SET device_fingerprint = NULL, updated_at = $1 WHERE device_id = $2",
+          Date.now(),
+          clash.device_id,
+        );
+        return null;
+      }
+    }
+    console.warn(
+      `[${new Date().toISOString()}] EMPREINTE refusée : ${deviceId} (${fingerprint.slice(0, 12)}…) ` +
+        `correspond à « ${clash.store_name} » (${clash.device_id}) — aucun compte créé`,
+    );
+    return {
+      status: 409,
+      payload: {
         error: `Cet appareil est déjà enregistré sous la boutique « ${clash.store_name} » (${clash.device_id}). Un seul appareil physique par boutique.`,
         code: "fingerprint_conflict",
         existing_device_id: clash.device_id,
-      });
-    }
-  }
+      },
+    };
+  };
+
+  let shop = await byDeviceId(device_id);
 
   // 1. Résolution du compte. Identifiants absents (vieux build) → le compte issu de la
   //    migration est repris tel quel. Téléphone inconnu → création avec essai et plus
@@ -95,6 +124,10 @@ router.post("/api/v1/handshake", async (req, res) => {
    if (accPhone && accPassword) {
     const existing = await accountByPhone(accPhone);
     if (!existing) {
+      // Le contrôle d'empreinte PRÉCÈDE la création : un refus 409 ne laisse aucun
+      // compte fantôme (aucune boutique, invisible au tableau de bord).
+      const blocked = await fingerprintBlock(device_id, device_fingerprint, null);
+      if (blocked) return res.status(blocked.status).json(blocked.payload);
       // Comptes créés hors ligne puis réconciliés ici : le premier écran à joindre le
       // serveur enregistre le compte, les suivants se rattachent avec les mêmes infos.
       const tier = PRICE_TIERS[0] ?? { price: PRICE_PER_MONTH_FCFA, devices: 1 };
@@ -132,18 +165,7 @@ router.post("/api/v1/handshake", async (req, res) => {
         );
         account = memberAccount;
       } else {
-        // NOUVEAU : si un pair_code est fourni (scan QR proprio), auto-bénédiction
-        // au lieu de rejeter — l'employé a scanné le QR du proprio.
-        const pairCode = str(body.pair_code);
-        if (pairCode) {
-          await deviceBlessing(device_id, memberAccount.id, null);
-          account = memberAccount;
-          console.log(
-            `[${new Date().toISOString()}] AUTO-BÉNÉDICTION (re-key) : écran ${device_id} approuvé via pair_code pour compte « ${memberAccount.name} »`,
-          );
-        } else {
-          return res.status(403).json({ error: "Mot de passe du compte incorrect.", code: "account_password" });
-        }
+        return res.status(403).json({ error: "Mot de passe du compte incorrect.", code: "account_password" });
       }
     } else {
       // Le mot de passe se valide sur le compte présenté (la redirection garde ses
@@ -175,12 +197,11 @@ router.post("/api/v1/handshake", async (req, res) => {
 
   // 1 ter. Résolution par LIEN de partage (jeton relay + bénédiction propriétaire) :
   // l'écran invité présente account_phone SANS mot de passe. S'il a déjà été
-  // bénédictionné, on authentifie et on génère un secret par-appareil.
-  // NOUVEAU : si un pair_code valide est fourni (QR propriétaire scanné),
-  // on auto-bénédictionne l'employé — plus de pending_blessing.
+  // bénédictionné, on authentifie et on génère un secret par-appareil. Sinon, il
+  // attend l'approbation manuelle du propriétaire (POST /api/v1/account/bless) —
+  // un code déclaré ne bénit JAMAIS seul : la preuve d'appartenance reste le geste
+  // du propriétaire, pas un champ que n'importe qui peut recopier.
   if (!account && accPhone && !accPassword) {
-    const pairCode = str(body.pair_code);
-
     // 1. Bénédiction existante pour cet appareil ?
     const blessing = await deviceBlessingByDevice(device_id);
     if (blessing) {
@@ -193,28 +214,21 @@ router.post("/api/v1/handshake", async (req, res) => {
           `[${new Date().toISOString()}] LIEN accepté : écran ${device_id} rattaché au compte « ${account.name} » (#${account.id})`,
         );
       }
-    }
-    // 2. pair_code fourni + compte identifiable par téléphone = auto-bénédiction immédiate
-    else if (pairCode) {
-      const ownerAcc = await accountByPhone(accPhone);
-      if (ownerAcc) {
-        await deviceBlessing(device_id, ownerAcc.id, null);
-        account = await resolveAccount(ownerAcc);
-        pendingBlessing = false;
-        console.log(
-          `[${new Date().toISOString()}] AUTO-BÉNÉDICTION : écran ${device_id} approuvé via pair_code pour compte « ${ownerAcc.name} »`,
-        );
-      }
-    }
-    // 3. Sinon attente d'approbation manuelle
-    else {
+    } else {
       pendingBlessing = true;
     }
   }
 
+  // 1 quater. Empreinte appliquée pour les chemins déjà résolus (mdp valide, mot clé,
+  //    bénédiction, héritage) — la création par identifiants inconnus l'a fait en
+  //    ligne (cf. branche de création). Le compte présenté, s'il existe, autorise le
+  //    retour de l'écran dans SA propre équipe (réinstallation).
+  const blocked = await fingerprintBlock(device_id, device_fingerprint, account);
+  if (blocked) return res.status(blocked.status).json(blocked.payload);
+
   // 2. Fiche boutique : mise à jour douce des champs fournis, création si inconnue
   //    (jamais d'erreur bloquante) — inchangé depuis le v2. L'empreinte a déjà été
-  //    contrôlée en tête de route (cf. « 0. ») : ici, un `device_id` inconnu qui passe
+  //    contrôlée (cf. « 0. » et « 1 quater. ») : ici, un `device_id` inconnu qui passe
   //    la porte est forcément un appareil inédit.
   const app_version_used = optStr(body.app_version);
   const app_origin = str(body.app_origin) || "pos";
