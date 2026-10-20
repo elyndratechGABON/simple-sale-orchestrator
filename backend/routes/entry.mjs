@@ -81,6 +81,20 @@ router.post("/api/v1/handshake", async (req, res) => {
       fingerprint,
     );
     if (!clash) return null;
+    // Un compte présenté (mot de passe ou mot clé validé) réclame l'empreinte :
+    // fiche migrée (account_id NULL — l'équipe d'origine est perdue) → rattachée
+    // au compte présenté, son poste d'empreinte libéré ; même équipe (réinstalla-
+    // tion) → passe. Les fiches au compte différent restent soumises à la règle
+    // du fondateur (cf. « 0. ») : un mur correct n'est pas un mur systématique.
+    if (presentedAccount && !clash.account_id) {
+      await db.run(
+        "UPDATE shops SET account_id = $1, device_fingerprint = NULL, updated_at = $2 WHERE device_id = $3",
+        presentedAccount.id,
+        Date.now(),
+        clash.device_id,
+      );
+      return null;
+    }
     if (presentedAccount && clash.account_id === presentedAccount.id) return null;
     if (clash.account_id) {
       const anchor = await db.get(
@@ -222,9 +236,14 @@ router.post("/api/v1/handshake", async (req, res) => {
   // 1 quater. Empreinte appliquée pour les chemins déjà résolus (mdp valide, mot clé,
   //    bénédiction, héritage) — la création par identifiants inconnus l'a fait en
   //    ligne (cf. branche de création). Le compte présenté, s'il existe, autorise le
-  //    retour de l'écran dans SA propre équipe (réinstallation).
-  const blocked = await fingerprintBlock(device_id, device_fingerprint, account);
-  if (blocked) return res.status(blocked.status).json(blocked.payload);
+  //    retour de l'écran dans SA propre équipe (réinstallation). Une attente de
+  //    bénédiction n'a RIEN écrit encore : le mur ne la frappe pas — l'écran invité
+  //    attend la décision du propriétaire, la fiche en attente est créée sans posé
+  //    d'empreinte disputée, et le conflit sera tranché au geste du propriétaire.
+  if (!pendingBlessing) {
+    const blocked = await fingerprintBlock(device_id, device_fingerprint, account);
+    if (blocked) return res.status(blocked.status).json(blocked.payload);
+  }
 
   // 2. Fiche boutique : mise à jour douce des champs fournis, création si inconnue
   //    (jamais d'erreur bloquante) — inchangé depuis le v2. L'empreinte a déjà été
@@ -274,7 +293,9 @@ router.post("/api/v1/handshake", async (req, res) => {
       optStr(body.phone),
       optStr(body.location),
       app_version_used,
-      device_fingerprint,
+      // COALESCE : une attente de bénédiction ne pose pas d'empreinte disputée
+      // (cf. INSERT ci-dessous) — la fiche existante garde la sienne.
+      pendingBlessing ? null : device_fingerprint,
       app_origin,
       now,
       shop.id,
@@ -297,7 +318,11 @@ router.post("/api/v1/handshake", async (req, res) => {
       now,
       app_version_used,
       app_origin,
-      device_fingerprint,
+      // Une fiche en attente de bénédiction ne prend pas d'empreinte disputée :
+      // l'index UNIQUE rendrait l'insertion impossible (500) — l'empreinte
+      // sera posée au prochain handshake APRÈS la bénédiction, au moment où
+      // le mur tranche le conflit via le compte désormais résolu.
+      pendingBlessing ? null : device_fingerprint,
     );
     shop = await byDeviceId(device_id);
   }

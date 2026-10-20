@@ -146,6 +146,45 @@ test("l'empreinte se vérifie AVANT la création du compte", () => {
   );
 });
 
+test("une attente de bénédiction ne frappe ni le mur ni l'index UNIQUE", () => {
+  const entry = readFileSync(new URL("../routes/entry.mjs", import.meta.url, import.meta.url), "utf8");
+  // L'écran invité qui attend la décision du propriétaire n'a encore rien écrit :
+  // le mur 409 devant lui ferme la porte de l'équipe pour toujours (loop), et
+  // une fiche en attente qui pose une empreinte disputée déclenche l'index
+  // UNIQUE (500). L'empreinte sera tranchée au prochain handshake après
+  // bénédiction, quand le compte est résolu.
+  assert.match(
+    entry,
+    /if \(!pendingBlessing\) \{\s*const blocked = await fingerprintBlock/,
+    "le mur doit être épargné à l'attente de bénédiction",
+  );
+  assert.match(
+    entry,
+    /pendingBlessing \? null : device_fingerprint/,
+    "une fiche en attente ne pose pas d'empreinte disputée",
+  );
+});
+
+test("une fiche migrée (account_id NULL) rejoint le compte présenté au lieu du mur", () => {
+  const entry = readFileSync(new URL("../routes/entry.mjs", import.meta.url, import.meta.url), "utf8");
+  const start = entry.indexOf("const fingerprintBlock");
+  assert.ok(start > 0, "fingerprintBlock introuvable");
+  const block = entry.slice(start, entry.indexOf("\n  };", start));
+  // Le 409 permanent sur une fiche de migration enfonce l'écran dans un mur
+  // sans issue : avec un compte présenté et authentifié, la fiche est
+  // rattachée au compte présenté et son poste d'empreinte est libéré.
+  assert.match(
+    block,
+    /presentedAccount && !clash\.account_id/,
+    "le rattachement de la fiche migrée a disparu du contrôle d'empreinte",
+  );
+  assert.match(
+    block,
+    /SET account_id = \$1, device_fingerprint = NULL/,
+    "le rattachement doit rattacher le compte ET libérer l'empreinte en un UPDATE",
+  );
+});
+
 test("la route de libération d'empreinte est authentifiée et ne supprime rien", () => {
   const cc = readFileSync(new URL("../routes/cc.mjs", import.meta.url, import.meta.url), "utf8");
   const start = cc.indexOf('router.post("/api/v1/admin/shops/:device_id/release-fingerprint"');
