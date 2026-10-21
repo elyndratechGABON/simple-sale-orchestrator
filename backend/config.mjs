@@ -109,9 +109,13 @@ if (REQUIRE_SECRETS) {
     );
   }
 }
-// Grace period : 2 jours après l'expiration pendant lesquels le compte reste actif
+// Grace period : 3 jours après l'expiration pendant lesquels le compte reste actif
 // (100% fonctionnel) avant la coupure définitive. Configurable via GRACE_PERIOD_DAYS.
-const GRACE_PERIOD_DAYS = Number(process.env.GRACE_PERIOD_DAYS ?? 2);
+//
+// Ce sont les 3 jours de TOLÉRANCE promis au commerçant : il paie, le SMS met le temps
+// à arriver, le validation suit. Passé ce délai sans paiement validé, l'écran est
+// bloqué (le statut « expiré » verrouille la caisse comme une suspension).
+const GRACE_PERIOD_DAYS = Number(process.env.GRACE_PERIOD_DAYS ?? 3);
 export const GRACE_PERIOD_MS = GRACE_PERIOD_DAYS * DAY_MS;
 
 export const EXPLICIT =
