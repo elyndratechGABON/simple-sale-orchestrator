@@ -92,7 +92,7 @@ async function drainOne(shopId, accountId) {
     // `await` obligatoire : `archive` est async. Sans lui, `stored += <Promise>` concatène
 // une promesse à un nombre (« 0[object Promise] ») et le compteur de progression ment —
 // l'archive se remplissait quand même, mais rien ne le disait.
-stored += await archive(shopId, ops, key);
+        stored += await archive(shopId, ops, key, accountId);
     const r = await purgeIds(ids);
     purged += r.purged ?? 0;
     rounds++;
@@ -201,7 +201,7 @@ async function pullShop(shopId) {
 }
 
 /** Copie idempotente dans l'archive locale. Renvoie le nombre de lignes NOUVELLES. */
-async function archive(shopId, ops, key) {
+async function archive(shopId, ops, key, accountId) {
   const now = Date.now();
   let inserted = 0;
   await db.tx(async (client) => {
