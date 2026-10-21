@@ -65,6 +65,8 @@ export async function drainRelayFromOps() {
     perShop.push({ shop_id: shop.shop_id, ...r });
   }
 
+  const retention = await pruneRetention();
+
   const info = {
     ok: true,
     relay: OPS_RELAY_URL,
@@ -72,12 +74,64 @@ export async function drainRelayFromOps() {
     ops_copiees: stored,
     ops_purgees: purged,
     boutiques_ignorees: skipped,
+    retention,
     duree_ms: Date.now() - started,
     details: perShop,
   };
   console.log(`[drainer] ${new Date().toISOString()} — ${info.boutiques} boutique(s), ` +
-    `${stored} op(s) copiées vers l'archive, ${purged} purgée(s) (${info.duree_ms} ms)`);
+    `${stored} op(s) copiées vers l'archive, ${purged} purgée(s) (${info.duree_ms} ms) — ` +
+    `rétention : ${retention.aggregats_supprimes} agrégat(s), ${retention.evenements_supprimes} ` +
+    `événement(s), ${retention.ops_supprimes} op(s) d'archive supprimés`);
   return info;
+}
+
+/**
+ * RÉTENTION : ce que le service n'a plus besoin de garder.
+ *
+ * Sans elle, la base grossit à l'infini — et les trois tables qui grossissent sont
+ * exactement celles qui n'apportent plus rien au bout d'un certain âge :
+ *
+ *  - `sync_payloads` : un agrégat par écran et par synchronisation (une toutes les
+ *    5 minutes). Le tableau de bord en lit le DERNIER par écran, et les graphiques
+ *    sur 7 jours. Au-delà, c'est du poids mort : on garde 8 jours.
+ *  - `activity_events` : le journal d'audit. Six mois, c'est largement de quoi.
+ *  - `sync_ops` : l'archive des opérations — le filet de restauration après perte
+ *    d'un téléphone. Six mois, c'est la fenêtre utile.
+ *
+ * `daily_stats` (le CA par jour et par écran) et `payments` (l'encaissement) sont
+ * conservés : ce sont les chiffres du commerçant, pas un journal technique.
+ */
+async function pruneRetention() {
+  const now = Date.now();
+  const AGGREGATS_JOURS = 8;
+  const EVENEMENTS_JOURS = 180;
+  const ARCHIVE_JOURS = 180;
+  const run = async (sql, ...args) => db.run(sql, ...args);
+
+  // Les agrégats d'écran : les 8 derniers jours, PLUS le dernier de chaque écran
+  // (un écran qui n'a pas synchronisé depuis des semaines doit garder son dernier
+  // agrégat : c'est ce que le tableau de bord affiche).
+  const agregats = await run(
+    `DELETE FROM sync_payloads
+      WHERE received_at < $1
+        AND id NOT IN (SELECT max(id) FROM sync_payloads GROUP BY device_id)`,
+    now - AGGREGATS_JOURS * 86_400_000,
+  );
+  // Le journal d'audit : six mois.
+  const evenements = await run(
+    "DELETE FROM activity_events WHERE created_at < $1",
+    now - EVENEMENTS_JOURS * 86_400_000,
+  );
+  // L'archive des opérations : six mois.
+  const ops = await run(
+    "DELETE FROM sync_ops WHERE created_at < $1",
+    now - ARCHIVE_JOURS * 86_400_000,
+  );
+  return {
+    agregats_supprimes: agregats ?? 0,
+    evenements_supprimes: evenements ?? 0,
+    ops_supprimes: ops ?? 0,
+  };
 }
 
 async function drainOne(shopId, accountId) {
