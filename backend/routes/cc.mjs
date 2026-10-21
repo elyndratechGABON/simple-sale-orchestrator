@@ -357,16 +357,20 @@ router.get("/api/v1/admin/shops-detail", requireAdmin, async (req, res) => {
         payments: devices.reduce((n, d) => n + Number(d.payments || 0), 0),
         online: devices.some((d) => d.last_sync_at && now - d.last_sync_at < ONLINE_WINDOW_MS),
         // Les écrans du commerce : c'est ici qu'un employé apparaît, comme poste.
-        devices: devices.map((d) => ({
-          device_id: d.device_id,
-          store_name: d.store_name,
-          owner_name: d.owner_name,
-          status: d.suspended_at ? "suspended" : computeStatus(d),
-          suspended_at: d.suspended_at ?? null,
-          online: !!(d.last_sync_at && now - d.last_sync_at < ONLINE_WINDOW_MS),
-          last_sync_at: d.last_sync_at ?? null,
-          app_version_used: d.app_version_used ?? null,
-        })),
+        // Les écrans dont la place a été LIBÉRÉE (départ) n'y sont plus : ils ne
+        // comptent plus (cf. `account_device_count`) et n'ont plus à être listés.
+        devices: group.devices
+          .filter((d) => !d.released_at)
+          .map((d) => ({
+            device_id: d.device_id,
+            store_name: d.store_name,
+            owner_name: d.owner_name,
+            status: d.suspended_at ? "suspended" : computeStatus(d),
+            suspended_at: d.suspended_at ?? null,
+            online: !!(d.last_sync_at && now - d.last_sync_at < ONLINE_WINDOW_MS),
+            last_sync_at: d.last_sync_at ?? null,
+            app_version_used: d.app_version_used ?? null,
+          })),
       };
     }),
   );
