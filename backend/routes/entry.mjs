@@ -44,6 +44,7 @@ import {
   canReleaseSeat,
   releaseShopSeat,
   accountAnchorDevice,
+  maintenanceState,
 } from "../lib.mjs";
 import { broadcastStatus, broadcastRequest } from "./auth.mjs";
 import { parseSms } from "../sms-parser.mjs";
@@ -436,6 +437,10 @@ router.post("/api/v1/handshake", async (req, res) => {
     sync_allowed: effective === "active" || effective === "grace",
     over_limit: overLimit,
     ...(overLimit ? { reason: "device_limit" } : {}),
+    // Le MODE MAINTENANCE est annoncé ici : c'est le handshake qui passe toutes les
+    // minutes, donc c'est lui qui l'apprend à la caisse. Elle cesse alors de
+    // synchroniser (elle encaisse toujours — hors ligne d'abord).
+    maintenance: await maintenanceState(),
     // URL du relais P2P (ops) — le client s'en sert pour push/pull les ops (stock, ventes).
     ops_relay_url: OPS_RELAY_URL,
     // Le mot clé de récupération n'est renvoyé QU'AU MOMENT DE LA CRÉATION : l'écran qui

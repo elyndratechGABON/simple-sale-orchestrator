@@ -334,3 +334,11 @@ CREATE TABLE IF NOT EXISTS catalogue_requests (
   snapshot_sent     BIGINT NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_catalogue_requests_shop ON catalogue_requests (shop_id, status, created_at);
+-- Réglages GLOBAUX de l'orchestrateur (mode maintenance, etc.). Une clé, une valeur
+-- JSON : le mode maintenance est un interrupteur lu à CHAQUE handshake, il doit donc
+-- être en base (et non en mémoire : les fonctions serverless ne partagent rien).
+CREATE TABLE IF NOT EXISTS app_settings (
+  key         TEXT PRIMARY KEY,
+  value       TEXT NOT NULL,
+  updated_at  BIGINT NOT NULL
+);

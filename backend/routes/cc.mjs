@@ -31,6 +31,8 @@ import {
   computeSubscriptions,
   aggregateStats,
   resolveAccount,
+  maintenanceState,
+  setAppSetting,
 } from "../lib.mjs";
 import {
   sessionOf,
@@ -762,6 +764,38 @@ router.post("/api/v1/admin/clients/:id/activate", requireAdmin, async (req, res)
   await logAdminAction(req, "account", account.id, "activate", str(req.body?.reason));
   await logActivity("success", "account", "Compte réactivé", `${account.name} a été réactivé`, { account_id: account.id }, null, account.id);
   res.json({ ok: true, account: await publicAccount(await accountById(account.id)) });
+});
+
+// ── Mode maintenance ──────────────────────────────────────────────────────────────
+// Interrupteur GLOBAL : les caisses l'apprennent à leur handshake (toutes les
+// minutes) et cessent alors de pousser/tirer leurs opérations sur le relais P2P.
+//
+// ⚠️ Ce que le mode maintenance ne fait PAS : il ne bloque PAS la vente. La caisse
+// reste hors ligne d'abord — elle encaisse, elle écrit en local, elle n'envoie
+// rien. Les opérations restent en file (30 jours) et repartiront à la levée.
+//
+// Réservé à l'administrateur principal : c'est un interrupteur global, pas un
+// réglage de projet.
+router.get("/api/v1/admin/maintenance", requireMaster, async (_req, res) => {
+  res.json({ maintenance: await maintenanceState() });
+});
+
+router.post("/api/v1/admin/maintenance", requireMaster, async (req, res) => {
+  const body = req.body ?? {};
+  const enabled = body.enabled === true;
+  const message = str(body.message);
+  await setAppSetting("maintenance", { enabled, message });
+  await logActivity(
+    enabled ? "warn" : "success",
+    "system",
+    enabled ? "Mode maintenance activé" : "Mode maintenance levé",
+    message || (enabled ? "Les caisses cessent de synchroniser." : "La synchronisation reprend."),
+    null,
+  );
+  console.log(
+    `[${new Date().toISOString()}] MODE MAINTENANCE ${enabled ? "ACTIVÉ" : "LEVÉ"}${message ? ` — ${message}` : ""}`,
+  );
+  res.json({ ok: true, maintenance: await maintenanceState() });
 });
 
 // ── Action : changer l'abonnement d'un client ──────────────────────────────────────

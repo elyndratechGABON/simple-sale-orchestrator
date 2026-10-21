@@ -39,6 +39,7 @@ export function Dashboard() {
 
   const maxSeries = Math.max(...(timeseries?.by_day ?? []).map((d) => d.revenue), 1);
   const maxAccounts = Math.max(...(timeseries?.by_account ?? []).map((a) => a.total), 1);
+  const maxLieu = Math.max(...(sf?.par_lieu ?? []).map((l) => l.count), 1);
 
   return (
     <>
@@ -209,6 +210,34 @@ export function Dashboard() {
                 <span className="bar-label">{new Date(d.day + "T00:00:00").toLocaleDateString("fr-FR", { day: "2-digit" })}</span>
               </div>
             ))}
+          </div>
+        </section>
+
+        <section className="panel" aria-label="Répartition par lieu">
+          <div className="panel-head">
+            <div className="panel-title">
+              <ChartIcon size={15} />
+              <span>Commerces par lieu</span>
+            </div>
+          </div>
+          <div className="bars">
+            {(sf?.par_lieu ?? []).map((l) => (
+              <div key={l.lieu} className="bar-row">
+                <span className="bar-name">{l.lieu}</span>
+                <div className="bar-track">
+                  <div
+                    className="bar-fill"
+                    style={{ width: `${Math.max(4, (l.count / maxLieu) * 100)}%` }}
+                  />
+                </div>
+                <span className="bar-value mono">
+                  {l.count} commerce{l.count > 1 ? "s" : ""}
+                </span>
+              </div>
+            ))}
+            {(sf?.par_lieu ?? []).length === 0 && (
+              <div className="muted">Aucun commerce enregistré.</div>
+            )}
           </div>
         </section>
 

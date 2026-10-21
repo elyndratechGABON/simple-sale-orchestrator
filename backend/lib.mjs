@@ -12,6 +12,43 @@ import {
 } from "./config.mjs";
 import { createHash, randomBytes } from "node:crypto";
 
+// ── Réglages GLOBAUX (mode maintenance) ───────────────────────────────────────────
+// Un interrupteur global, lu à CHAQUE handshake : il doit vivre en base — les
+// fonctions serverless ne partagent aucune mémoire, et le relais P2P est un autre
+// service.
+export async function getAppSetting(key) {
+  const row = await db.get("SELECT value FROM app_settings WHERE key = $1", key);
+  if (!row) return null;
+  try {
+    return JSON.parse(row.value);
+  } catch {
+    return null;
+  }
+}
+
+export async function setAppSetting(key, value) {
+  await db.run(
+    `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, $3)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`,
+    key,
+    JSON.stringify(value ?? null),
+    Date.now(),
+  );
+}
+
+/**
+ * L'état du mode maintenance, tel que les caisses le recoivent au handshake.
+ * `{ enabled: false }` quand rien n'est dit — jamais `null` : la caisse doit pouvoir
+ * lire le champ sans se demander s'il est là.
+ */
+export async function maintenanceState() {
+  const value = await getAppSetting("maintenance");
+  return {
+    enabled: Boolean(value?.enabled),
+    message: typeof value?.message === "string" ? value.message : "",
+  };
+}
+
 /** Hachage du mot de passe du compte (argon2 si disponible, sinon SHA-256 + sel).
  *  Le mot de passe en clair ne quitte JAMAIS la base. */
 export async function hashPassword(password) {

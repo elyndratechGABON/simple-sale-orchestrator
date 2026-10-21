@@ -1063,6 +1063,9 @@ router.get("/api/v1/admin/storefront", requireAdmin, async (req, res) => {
             : computeStatus(premier),
         account_id: account?.id ?? null,
         account_name: account?.name ?? null,
+        // Le LIEU du commerce : le quartier du compte (c'est lui qui est quelque part),
+        // à défaut la localisation déclarée par l'écran.
+        location: (account?.quarter ?? premier.location ?? "").trim() || null,
         // L'abonnement du compte : places achetées, écrans réellement inscrits et revenu
         // mensuel que cette souscription rapporte à Elyndra.
         plan_name: plan,
@@ -1125,11 +1128,23 @@ router.get("/api/v1/admin/storefront", requireAdmin, async (req, res) => {
     arr_fcfa: subs.mrr_fcfa * 12,
   };
 
+  // Répartition par LIEU : d'où viennent les commerces. Le quartier du compte prime
+  // (c'est le commerce qui est quelque part) ; à défaut, la localisation déclarée
+  // par l'écran. Sans information : « Non renseigné » — jamais un lieu inventé.
+  const parLieu = new Map();
+  for (const row of shopRows) {
+    const lieu = (row.location ?? "").trim() || "Non renseigné";
+    parLieu.set(lieu, (parLieu.get(lieu) ?? 0) + 1);
+  }
+
   res.json({
     generated_at: now,
     project: origin,
     kpi,
     elyndra,
+    par_lieu: [...parLieu.entries()]
+      .map(([lieu, count]) => ({ lieu, count }))
+      .sort((a, b) => b.count - a.count || a.lieu.localeCompare(b.lieu, "fr")),
     shops: shopRows.sort(
       (a, b) => b.ca_month_fcfa - a.ca_month_fcfa || a.store_name.localeCompare(b.store_name, "fr"),
     ),

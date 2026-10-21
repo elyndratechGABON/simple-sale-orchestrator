@@ -268,9 +268,11 @@ export interface StorefrontShop {
   status: string;
   account_id: number | null;
   account_name: string | null;
+  /** Le lieu du commerce (quartier du compte, ou localisation de l'écran). */
+  location: string | null;
   plan_name: string | null;
   plan_price_fcfa: number | null;
-  /** Écrans du commerce, comparés aux places payées. */
+  /** écrans du commerce, comparés aux places payées. */
   device_count: number;
   max_devices: number;
   over_limit: boolean;
@@ -302,6 +304,8 @@ export interface Storefront {
     mrr_fcfa: number;
     arr_fcfa: number;
   };
+  /** Répartition des commerces par lieu (le plus grand d'abord). */
+  par_lieu: { lieu: string; count: number }[];
   shops: StorefrontShop[];
 }
 
@@ -610,7 +614,26 @@ export function setAccountPassword(accountId: number, password: string): Promise
 }
 
 /**
- * Changer l'ABONNEMENT d'un commerce : le montant palier (10 000 F = 3 écrans,
+ * L'état du mode maintenance (interrupteur global, administrateur principal).
+ * Quand il est actif, les caisses cessent de synchroniser — elles encassent toujours.
+ */
+export function fetchMaintenance(): Promise<{
+  maintenance: { enabled: boolean; message: string };
+}> {
+  return request("/api/v1/admin/maintenance");
+}
+
+export function setMaintenance(body: {
+  enabled: boolean;
+  message?: string;
+}): Promise<{ ok: boolean; maintenance: { enabled: boolean; message: string } }> {
+  return request("/api/v1/admin/maintenance", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/** Changer l'ABONNEMENT d'un commerce : le montant palier (10 000 F = 3 écrans,
  * 25 000 F = 5, 50 000 F = 9) fixe le nombre de places. `days` prolonge d'autant.
  */
 export function setAccountPlan(
