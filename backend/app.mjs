@@ -3,7 +3,7 @@
 // drain déclenchée par cron. Ne LANÇA aucun serveur ici : écouter est le travail de
 // l'entrée qui l'appelle (serverless = pas de listen).
 import { existsSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import crypto from "node:crypto";
@@ -110,7 +110,21 @@ app.get("/api/v1/drain", (req, res) => {
 // ── Dashboard statique (build de /dashboard, si présent) ────────────────────────
 const dashboardDist = join(__dirname, "..", "dashboard", "dist");
 if (existsSync(dashboardDist)) {
-  app.use(express.static(dashboardDist));
+  // Le DOCUMENT ne doit JAMAIS être mis en cache : il référence les assets par leur
+  // nom haché, et un vieux document pointerait vers des fichiers disparus — la page
+  // cassait alors sur « Failed to load module script » jusqu'au rechargement forcé.
+  // Les assets, eux, sont immuables (leur nom porte le hash) : ils se cachent fort.
+  app.use(
+    express.static(dashboardDist, {
+      setHeaders(res, filePath) {
+        if (filePath.endsWith(".html")) {
+          res.setHeader("Cache-Control", "no-cache, must-revalidate");
+        } else if (filePath.includes(`${sep}assets${sep}`)) {
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        }
+      },
+    }),
+  );
   app.get(/^\/(?!api\/).*/, (_req, res) => res.sendFile(join(dashboardDist, "index.html")));
 } else {
   app.get(["/", "/admin"], (_req, res) => {
