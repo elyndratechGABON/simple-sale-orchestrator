@@ -53,7 +53,7 @@ export function Clients({ onSelect }: Props) {
       {error && <div className="alert-banner">{error}</div>}
 
       <div className="topbar-controls">
-        <SearchBar value={filter} onChange={setFilter} placeholder="Rechercher un compte, un t\u00e9l\u00e9phone, une caisse\u2026" />
+        <SearchBar value={filter} onChange={setFilter} placeholder="Rechercher un compte, un téléphone, une caisse…" />
       </div>
 
       <div className="stats" aria-label="Clients">
@@ -66,7 +66,7 @@ export function Clients({ onSelect }: Props) {
           <div className="v ok">{activeCount}</div>
         </div>
         <div className="stat">
-          <div className="k">En gr\u00e2ce</div>
+          <div className="k">En grâce</div>
           <div className="v" style={{ color: "#c2410c" }}>{graceCount}</div>
         </div>
         <div className="stat">
@@ -74,15 +74,15 @@ export function Clients({ onSelect }: Props) {
           <div className="v warn">{suspendedCount}</div>
         </div>
         <div className="stat">
-          <div className="k">Expir\u00e9s</div>
+          <div className="k">Expirés</div>
           <div className="v danger">{expiredCount}</div>
         </div>
         <div className="stat">
-          <div className="k">Expirent \u2264 7 j</div>
+          <div className="k">Expirent ≤ 7 j</div>
           <div className="v">{expiringSoon.length}</div>
         </div>
         <div className="stat">
-          <div className="k">MRR estim\u00e9</div>
+          <div className="k">MRR estimé</div>
           <div className="v accent">{fmtFcfa(mrr)}</div>
         </div>
       </div>
@@ -114,7 +114,7 @@ export function Clients({ onSelect }: Props) {
           <div className="empty">
             <InboxIcon size={28} />
             <strong>Aucun client</strong>
-            Un client est cr\u00e9\u00e9 au premier lancement d'une caisse.
+            Un client est créé au premier lancement d'une caisse.
           </div>
         )}
       </div>
@@ -133,10 +133,10 @@ function ClientCard({ client, now, onSelect }: { client: Client; now: number; on
           <strong>{client.name || "Sans nom"}</strong>
           <div className="meta">
             {client.owner_name}
-            {client.phone ? ` \u00b7 ${client.phone}` : ""}
+            {client.phone ? ` · ${client.phone}` : ""}
           </div>
         </div>
-        <div className="acc-tier" title="Appareils utilis\u00e9s / palier de l'abonnement">
+        <div className="acc-tier" title="Appareils utilisés / palier de l'abonnement">
           <StoreIcon size={14} />
           <span className="mono">{client.device_count}/{client.max_devices}</span>
         </div>

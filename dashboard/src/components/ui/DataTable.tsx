@@ -40,7 +40,7 @@ export function DataTable<T extends Record<string, any>>({ columns, data, keyFn,
           {data.length === 0 && (
             <tr>
               <td colSpan={columns.length}>
-                <div className="empty">{emptyMessage ?? "Aucune donn\u00e9e."}</div>
+                <div className="empty">{emptyMessage ?? "Aucune donnée."}</div>
               </td>
             </tr>
           )}

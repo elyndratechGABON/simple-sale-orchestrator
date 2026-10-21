@@ -6,7 +6,7 @@ export function SearchBar({ value, onChange, placeholder }: { value: string; onC
       <SearchIcon size={15} />
       <input
         type="search"
-        placeholder={placeholder ?? "Rechercher\u2026"}
+        placeholder={placeholder ?? "Rechercher…"}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         aria-label="Rechercher"

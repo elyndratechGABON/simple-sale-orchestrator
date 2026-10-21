@@ -11,7 +11,7 @@ const NAV_ITEMS: { id: Page; label: string; icon: ReactElement; masterOnly?: boo
   { id: "paiements", label: "Paiements", icon: <BanknoteIcon size={18} /> },
   { id: "appareils", label: "Appareils", icon: <SmartphoneIcon size={18} /> },
   { id: "sync", label: "Synchronisation", icon: <RefreshIcon size={18} /> },
-  { id: "activite", label: "Activit\u00e9", icon: <ActivityIcon size={18} /> },
+  { id: "activite", label: "Activité", icon: <ActivityIcon size={18} /> },
   { id: "audit", label: "Audit", icon: <ShieldIcon size={18} />, masterOnly: true },
 ];
 
@@ -78,7 +78,7 @@ export function Layout({
             >
               {dark ? <SunIcon size={16} /> : <MoonIcon size={16} />}
             </button>
-            <button className="btn btn-ghost btn-icon" onClick={onLogout} title="D\u00e9connexion" aria-label="D\u00e9connexion">
+            <button className="btn btn-ghost btn-icon" onClick={onLogout} title="Déconnexion" aria-label="Déconnexion">
               <LogOutIcon size={16} />
             </button>
           </div>
@@ -92,7 +92,7 @@ export function Layout({
               {visible.find((n) => n.id === page)?.label ?? "Dashboard"}
             </h1>
           </div>
-          <span className="live" title="Temps r\u00e9el via SSE">
+          <span className="live" title="Temps réel via SSE">
             <span className="dot" />
             Live
           </span>

@@ -62,7 +62,7 @@ export function Audit() {
                     <span className="badge">{a.action}</span>
                   </td>
                   <td>
-                    <span className="meta">{a.reason || "\u2014"}</span>
+                    <span className="meta">{a.reason || "—"}</span>
                   </td>
                   <td className="mono" title={fmtDateTime(a.created_at)}>{fmtDate(a.created_at)}</td>
                 </tr>

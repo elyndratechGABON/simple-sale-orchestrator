@@ -6,7 +6,7 @@ export function RetentionTable({ months }: { months: RetentionMonth[] }) {
     return (
       <div className="chart-empty">
         <InboxIcon size={22} />
-        Aucune donn\u00e9e.
+        Aucune donnée.
       </div>
     );
   return (
@@ -18,7 +18,7 @@ export function RetentionTable({ months }: { months: RetentionMonth[] }) {
             <th>Actifs</th>
             <th>Nouveaux</th>
             <th>Perdus</th>
-            <th>R\u00e9tention</th>
+            <th>Rétention</th>
           </tr>
         </thead>
         <tbody>

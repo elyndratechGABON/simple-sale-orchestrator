@@ -81,7 +81,7 @@ export function Appareils() {
               label: "Boutique",
               render: (d: Device) => (
                 <div className="cell-store">
-                  <strong>{d.store_name || "\u2014"}</strong>
+                  <strong>{d.store_name || "—"}</strong>
                   <div className="meta">{d.owner_name}</div>
                 </div>
               ),
@@ -105,7 +105,7 @@ export function Appareils() {
             {
               key: "app_version_used",
               label: "Version",
-              render: (d: Device) => <span className="mono">{d.app_version_used ?? "\u2014"}</span>,
+              render: (d: Device) => <span className="mono">{d.app_version_used ?? "—"}</span>,
             },
             {
               key: "sync_pending",
@@ -119,7 +119,7 @@ export function Appareils() {
             },
             {
               key: "last_sync_at",
-              label: "Derni\u00e8re sync",
+              label: "Dernière sync",
               render: (d: Device) => <span className="mono">{fmtDateTime(d.last_sync_at)}</span>,
             },
           ]}

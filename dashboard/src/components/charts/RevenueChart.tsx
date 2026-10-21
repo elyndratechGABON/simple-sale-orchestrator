@@ -6,7 +6,7 @@ export function RevenueChart({ points }: { points: { day: number; revenue: numbe
     return (
       <div className="chart-empty">
         <ChartIcon size={22} />
-        Aucune donn\u00e9e sur 7 jours \u2014 les caisses doivent synchroniser.
+        Aucune donnée sur 7 jours — les caisses doivent synchroniser.
       </div>
     );
   const W = 640;
@@ -20,7 +20,7 @@ export function RevenueChart({ points }: { points: { day: number; revenue: numbe
     points.map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p[key]).toFixed(1)}`).join(" ");
   const area = `M${x(0)},${H - PAD} ${line("revenue").slice(1)} L${x(points.length - 1)},${H - PAD} Z`;
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="chart" role="img" aria-label="Chiffre d'affaires et b\u00e9n\u00e9fice des 7 derniers jours">
+    <svg viewBox={`0 0 ${W} ${H}`} className="chart" role="img" aria-label="Chiffre d'affaires et bénéfice des 7 derniers jours">
       <defs>
         <linearGradient id="rev-fill" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.22" />

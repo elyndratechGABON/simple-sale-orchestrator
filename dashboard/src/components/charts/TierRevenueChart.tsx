@@ -7,7 +7,7 @@ export function TierRevenueChart({ months }: { months: TierRevenueMonth[] }) {
     return (
       <div className="chart-empty">
         <ChartIcon size={22} />
-        Aucune donn\u00e9e de revenus \u2014 les paiements appara\u00eetront ici.
+        Aucune donnée de revenus — les paiements apparaîtront ici.
       </div>
     );
   const W = 640;

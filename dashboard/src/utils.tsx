@@ -10,7 +10,7 @@ export const TIERS = [
 ];
 
 export const fmtDate = (ms: number | null | undefined): string =>
-  ms ? new Date(ms).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" }) : "\u2014";
+  ms ? new Date(ms).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
 
 export const fmtDateShort = (ms: number): string =>
   new Date(ms).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" });
@@ -24,15 +24,15 @@ export const fmtDateTime = (ms: number | null | undefined): string =>
         hour: "2-digit",
         minute: "2-digit",
       })
-    : "\u2014";
+    : "—";
 
 export const fmtFcfa = (n: number | null | undefined): string =>
-  n == null ? "\u2014" : `${Math.round(n).toLocaleString("fr-FR")} F`;
+  n == null ? "—" : `${Math.round(n).toLocaleString("fr-FR")} F`;
 
 export function fmtAgo(ms: number | null | undefined): string {
   if (!ms) return "jamais";
   const s = Math.floor((Date.now() - ms) / 1000);
-  if (s < 60) return "\u00e0 l'instant";
+  if (s < 60) return "à l'instant";
   if (s < 3600) return `il y a ${Math.floor(s / 60)} min`;
   if (s < 86_400) return `il y a ${Math.floor(s / 3600)} h`;
   return `il y a ${Math.floor(s / 86_400)} j`;
@@ -62,17 +62,17 @@ export function statusBadge(status: string): ReactElement {
     status === "active"
       ? "Actif"
       : status === "grace"
-        ? "En gr\u00e2ce"
+        ? "En grâce"
         : status === "suspended"
           ? "Suspendu"
           : status === "over_limit"
             ? "Hors quota"
-            : "Expir\u00e9";
+            : "Expiré";
   return <span className={`badge ${cls}`}>{label}</span>;
 }
 
 export function deliveryBadge(deliveredAt: number | null | undefined, supersededAt: number | null | undefined): ReactElement {
-  if (supersededAt) return <span className="badge superseded">Remplac\u00e9e</span>;
-  if (deliveredAt) return <span className="badge delivered">R\u00e9cup\u00e9r\u00e9e</span>;
+  if (supersededAt) return <span className="badge superseded">Remplacée</span>;
+  if (deliveredAt) return <span className="badge delivered">Récupérée</span>;
   return <span className="badge pending">En attente</span>;
 }

@@ -6,7 +6,7 @@ export function RetentionChart({ months }: { months: RetentionMonth[] }) {
     return (
       <div className="chart-empty">
         <ChartIcon size={22} />
-        Aucune donn\u00e9e de r\u00e9tention.
+        Aucune donnée de rétention.
       </div>
     );
   const W = 640;
@@ -19,7 +19,7 @@ export function RetentionChart({ months }: { months: RetentionMonth[] }) {
   const line = months.map((m, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(m.retention_pct).toFixed(1)}`).join(" ");
   const area = `M${x(0)},${H - PAD} ${line.slice(1)} L${x(months.length - 1)},${H - PAD} Z`;
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="chart" role="img" aria-label="Taux de r\u00e9tention">
+    <svg viewBox={`0 0 ${W} ${H}`} className="chart" role="img" aria-label="Taux de rétention">
       <defs>
         <linearGradient id="ret-fill" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="var(--ok)" stopOpacity="0.22" />

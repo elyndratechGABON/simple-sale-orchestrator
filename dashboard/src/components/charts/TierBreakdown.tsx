@@ -7,7 +7,7 @@ export function TierBreakdown({ months }: { months: TierRevenueMonth[] }) {
     return (
       <div className="chart-empty">
         <InboxIcon size={22} />
-        Aucune donn\u00e9e.
+        Aucune donnée.
       </div>
     );
   return (

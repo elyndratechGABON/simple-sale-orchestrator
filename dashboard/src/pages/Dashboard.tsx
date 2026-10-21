@@ -62,7 +62,7 @@ export function Dashboard() {
           <div className="v warn">{kpi?.hors_ligne ?? 0}</div>
         </div>
         <div className="stat">
-          <div className="k">En gr\u00e2ce</div>
+          <div className="k">En grâce</div>
           <div className="v" style={{ color: "#c2410c" }}>{kpi?.en_grace ?? 0}</div>
         </div>
         <div className="stat">
@@ -70,18 +70,18 @@ export function Dashboard() {
           <div className="v">{kpi?.suspendues ?? 0}</div>
         </div>
         <div className="stat">
-          <div className="k">Expir\u00e9es</div>
+          <div className="k">Expirées</div>
           <div className="v danger">{kpi?.expirees ?? 0}</div>
         </div>
         <div className="stat">
-          <div className="k">Employ\u00e9s</div>
+          <div className="k">Employés</div>
           <div className="v">{kpi?.employees ?? 0}</div>
         </div>
       </div>
 
-      <div className="stats" aria-label="Ma rentr\u00e9e Elyndra">
+      <div className="stats" aria-label="Ma rentrée Elyndra">
         <div className="stat">
-          <div className="k">Encaiss\u00e9 ce mois</div>
+          <div className="k">Encaissé ce mois</div>
           <div className="v accent">{fmtFcfa(elyndra?.mois_encaisse)}</div>
         </div>
         <div className="stat">
@@ -124,7 +124,7 @@ export function Dashboard() {
         ) : shops.length === 0 ? (
           <div className="empty">
             <strong>Aucune boutique</strong>
-            Les caisses apparaissent ici apr\u00e8s leur premier lancement.
+            Les caisses apparaissent ici après leur premier lancement.
           </div>
         ) : (
           <div className="table-wrap">
@@ -133,10 +133,10 @@ export function Dashboard() {
                 <tr>
                   <th>Boutique</th>
                   <th>Abonnement</th>
-                  <th>\u00c9crans</th>
+                  <th>Écrans</th>
                   <th>Statut</th>
-                  <th>\u00c9tat</th>
-                  <th>Derni\u00e8re sync</th>
+                  <th>État</th>
+                  <th>Dernière sync</th>
                   <th>CA ce mois</th>
                   <th>Elyndra/mois</th>
                 </tr>
@@ -163,7 +163,7 @@ export function Dashboard() {
                       ) : s.plan_price_fcfa != null ? (
                         <span className="mono">{fmtFcfa(s.plan_price_fcfa)}</span>
                       ) : (
-                        "\u2014"
+                        "—"
                       )}
                     </td>
                     <td>
@@ -190,7 +190,7 @@ export function Dashboard() {
           <div className="panel-head">
             <div className="panel-title">
               <TrendingUpIcon size={15} />
-              <span>Revenu Elyndra \u2014 30 jours ({timeseries?.days ?? 0} j)</span>
+              <span>Revenu Elyndra — 30 jours ({timeseries?.days ?? 0} j)</span>
             </div>
             <span className="panel-legend">
               <span className="legend-dot accent" /> Paiements abonnements
@@ -216,7 +216,7 @@ export function Dashboard() {
           <div className="panel-head">
             <div className="panel-title">
               <ChartIcon size={15} />
-              <span>Revenu Elyndra par client \u2014 30 jours</span>
+              <span>Revenu Elyndra par client — 30 jours</span>
             </div>
           </div>
           <div className="bars">
@@ -229,19 +229,19 @@ export function Dashboard() {
                 <span className="bar-value mono">{fmtFcfa(a.total)}</span>
               </div>
             ))}
-            {(timeseries?.by_account ?? []).length === 0 && <div className="muted">Aucun paiement sur la p\u00e9riode.</div>}
+            {(timeseries?.by_account ?? []).length === 0 && <div className="muted">Aucun paiement sur la période.</div>}
           </div>
         </section>
       </div>
 
-      <div className="stats" aria-label="Synth\u00e8se des revenus">
+      <div className="stats" aria-label="Synthèse des revenus">
         <div className="stat"><div className="k">Aujourd'hui</div><div className="v">{fmtFcfa(revSummary?.today)}</div></div>
         <div className="stat"><div className="k">Semaine</div><div className="v">{fmtFcfa(revSummary?.week)}</div></div>
         <div className="stat"><div className="k">Mois</div><div className="v">{fmtFcfa(revSummary?.month)}</div></div>
-        <div className="stat"><div className="k">Ann\u00e9e</div><div className="v">{fmtFcfa(revSummary?.year)}</div></div>
-        <div className="stat"><div className="k">MRR r\u00e9current</div><div className="v ok">{fmtFcfa(revSummary?.recurring_mrr)}</div></div>
+        <div className="stat"><div className="k">Année</div><div className="v">{fmtFcfa(revSummary?.year)}</div></div>
+        <div className="stat"><div className="k">MRR récurrent</div><div className="v ok">{fmtFcfa(revSummary?.recurring_mrr)}</div></div>
         <div className="stat"><div className="k">En attente</div><div className="v warn">{revSummary?.pending ?? 0}</div></div>
-        <div className="stat"><div className="k">Confirm\u00e9s</div><div className="v ok">{revSummary?.confirmed ?? 0}</div></div>
+        <div className="stat"><div className="k">Confirmés</div><div className="v ok">{revSummary?.confirmed ?? 0}</div></div>
       </div>
     </>
   );

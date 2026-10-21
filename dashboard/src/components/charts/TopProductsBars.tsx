@@ -6,14 +6,14 @@ export function TopProductsBars({ products }: { products: { name: string; quanti
     return (
       <div className="chart-empty">
         <InboxIcon size={22} />
-        Aucun produit \u2014 les caisses doivent synchroniser.
+        Aucun produit — les caisses doivent synchroniser.
       </div>
     );
   const max = Math.max(1, ...products.map((p) => p.revenue));
   return (
     <div className="bars">
       {products.map((p) => (
-        <div className="bar-row" key={p.name} title={`${p.name} \u2014 \u00d7${p.quantity}`}>
+        <div className="bar-row" key={p.name} title={`${p.name} — ×${p.quantity}`}>
           <span className="bar-name">{p.name}</span>
           <div className="bar-track">
             <div className="bar-fill" style={{ width: `${(p.revenue / max) * 100}%` }} />

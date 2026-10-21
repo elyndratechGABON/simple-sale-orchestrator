@@ -38,12 +38,12 @@ export function BoutiqueDetail({ deviceId, onBack }: Props) {
             <strong>{s.store_name || "Sans nom"}</strong>
             <div className="meta">
               {s.owner_name}
-              {s.phone ? ` \u00b7 ${s.phone}` : ""}
+              {s.phone ? ` · ${s.phone}` : ""}
             </div>
           </div>
           <div className="acc-tier">
             <StoreIcon size={14} />
-            <span className="mono">{s.app_version_used ?? "\u2014"}</span>
+            <span className="mono">{s.app_version_used ?? "—"}</span>
           </div>
           <div className="acc-status">{statusBadge(s.status)}</div>
         </header>
@@ -51,9 +51,9 @@ export function BoutiqueDetail({ deviceId, onBack }: Props) {
         <div className="acc-body">
           <div style={{ fontSize: 13, color: "var(--muted)" }}>
             <div>Device : <span className="mono">{s.device_id}</span></div>
-            <div>Enregistr\u00e9 le {fmtDate(s.registration_date)}</div>
-            <div>\u00c9ch\u00e9ance : {fmtDate(s.expiry_date)}</div>
-            {s.last_sync_at && <div>Derni\u00e8re sync : {fmtDateTime(s.last_sync_at)}</div>}
+            <div>Enregistré le {fmtDate(s.registration_date)}</div>
+            <div>Échéance : {fmtDate(s.expiry_date)}</div>
+            {s.last_sync_at && <div>Dernière sync : {fmtDateTime(s.last_sync_at)}</div>}
           </div>
         </div>
       </article>
@@ -77,7 +77,7 @@ export function BoutiqueDetail({ deviceId, onBack }: Props) {
                 <div className="v">{data.stats.totals?.sales ?? 0}</div>
               </div>
               <div className="stat">
-                <div className="k">B\u00e9n\u00e9fice</div>
+                <div className="k">Bénéfice</div>
                 <div className="v ok">{fmtFcfa(data.stats.totals?.profit)}</div>
               </div>
             </div>
@@ -104,7 +104,7 @@ export function BoutiqueDetail({ deviceId, onBack }: Props) {
       <div className="row-actions" style={{ marginTop: 16 }}>
         <button
           className="btn btn-sm btn-danger-ghost"
-          onClick={() => { if (confirm("Supprimer d\u00e9finitivement cette boutique ?")) deleteShop(deviceId).then(() => onBack()); }}
+          onClick={() => { if (confirm("Supprimer définitivement cette boutique ?")) deleteShop(deviceId).then(() => onBack()); }}
         >
           Supprimer
         </button>

@@ -115,7 +115,7 @@ export function Boutiques({ onSelect }: Props) {
     setBusy(true);
     try {
       await approveDeleteRequest(req.id);
-      setNotice(`Suppression de « ${req.store_name} » approuv\u00e9e — la caisse est lib\u00e9r\u00e9e.`);
+      setNotice(`Suppression de « ${req.store_name} » approuvée — la caisse est libérée.`);
       const [shopRes, reqRes] = await Promise.all([fetchShopsDetail(), fetchDeleteRequests({ status: "pending" })]);
       setShops(shopRes.shops);
       setDeletions(reqRes.requests);
@@ -130,7 +130,7 @@ export function Boutiques({ onSelect }: Props) {
     setBusy(true);
     try {
       await rejectDeleteRequest(req.id);
-      setNotice(`Demande de suppression de « ${req.store_name} » refus\u00e9e.`);
+      setNotice(`Demande de suppression de « ${req.store_name} » refusée.`);
       const res = await fetchDeleteRequests({ status: "pending" });
       setDeletions(res.requests);
     } catch (err) {
@@ -271,19 +271,19 @@ export function Boutiques({ onSelect }: Props) {
                   <strong>{r.store_name || "Boutique"}</strong>
                   <div className="meta">
                     {r.owner_name}
-                    {r.reason ? ` \u00b7 « ${r.reason} »` : ""}
+                    {r.reason ? ` · « ${r.reason} »` : ""}
                   </div>
                 </div>
                 <div className="acc-status">
-                  <span className="badge pending">Suppression demand\u00e9e</span>
+                  <span className="badge pending">Suppression demandée</span>
                 </div>
               </header>
               <div className="acc-body">
                 <div className="history">
-                  <h3>L'employ\u00e9 veut partir \u2014 {fmtDateTime(r.created_at)}</h3>
+                  <h3>L'employé veut partir — {fmtDateTime(r.created_at)}</h3>
                   <div className="history-item">
                     <span className="mono">{r.device_id}</span>
-                    <span className="muted">Appareil concern\u00e9</span>
+                    <span className="muted">Appareil concerné</span>
                   </div>
                 </div>
                 <div className="row-actions">
@@ -349,7 +349,7 @@ export function Boutiques({ onSelect }: Props) {
         <div className="empty">
           <InboxIcon size={28} />
           <strong>Aucune boutique</strong>
-          Les caisses apparaissent ici apr\u00e8s leur premier lancement.
+          Les caisses apparaissent ici après leur premier lancement.
         </div>
       ) : (
         <DataTable
@@ -359,7 +359,7 @@ export function Boutiques({ onSelect }: Props) {
               label: "Boutique",
               render: (s: ShopDetail) => (
                 <div className="cell-store">
-                  <strong>{s.store_name || "\u2014"}</strong>
+                  <strong>{s.store_name || "—"}</strong>
                   <div className="meta">{s.owner_name}</div>
                 </div>
               ),
@@ -367,7 +367,7 @@ export function Boutiques({ onSelect }: Props) {
             {
               key: "account_name",
               label: "Compte",
-              render: (s: ShopDetail) => <span>{s.account_name ?? "\u2014"}</span>,
+              render: (s: ShopDetail) => <span>{s.account_name ?? "—"}</span>,
             },
             {
               key: "account_tier",
@@ -375,15 +375,15 @@ export function Boutiques({ onSelect }: Props) {
               render: (s: ShopDetail) =>
                 s.account_max_devices != null ? (
                   <span className="mono">
-                    {s.account_device_count}/{s.account_max_devices} \u00e9crans
+                    {s.account_device_count}/{s.account_max_devices} écrans
                     {s.plan_name ? (
-                      <span className="muted"> \u00b7 {s.plan_name}</span>
+                      <span className="muted"> · {s.plan_name}</span>
                     ) : s.plan_price_fcfa != null ? (
-                      <span className="muted"> \u00b7 {fmtFcfa(s.plan_price_fcfa)}</span>
+                      <span className="muted"> · {fmtFcfa(s.plan_price_fcfa)}</span>
                     ) : null}
                   </span>
                 ) : (
-                  "\u2014"
+                  "—"
                 ),
             },
             {
@@ -418,12 +418,12 @@ export function Boutiques({ onSelect }: Props) {
             { key: "status", label: "Statut", render: (s: ShopDetail) => statusBadge(s.status) },
             {
               key: "expiry_date",
-              label: "\u00c9ch\u00e9ance",
+              label: "Échéance",
               render: (s: ShopDetail) => <span className="mono">{fmtDate(s.expiry_date)}</span>,
             },
             {
               key: "last_sync_at",
-              label: "Derni\u00e8re sync",
+              label: "Dernière sync",
               render: (s: ShopDetail) => <span className="mono">{fmtDateTime(s.last_sync_at)}</span>,
             },
             {

@@ -5,9 +5,9 @@ export function Countdown({ expiry, status, now }: { expiry: number; status: str
   const pct = Math.max(0, Math.min(100, ((expiry - now) / span) * 100));
   const d = daysLeftOf(expiry, now);
   const cls = status === "expired" ? "expired" : status === "suspended" ? "suspended" : d <= 7 ? "expiring" : d <= 30 ? "warning" : "ok";
-  const label = status === "expired" ? "Expir\u00e9" : status === "suspended" ? "Suspendu" : d <= 0 ? "Aujourd'hui" : `J-${d}`;
+  const label = status === "expired" ? "Expiré" : status === "suspended" ? "Suspendu" : d <= 0 ? "Aujourd'hui" : `J-${d}`;
   return (
-    <div className="countdown" title={`\u00c9ch\u00e9ance : ${fmtDate(expiry)}`}>
+    <div className="countdown" title={`Échéance : ${fmtDate(expiry)}`}>
       <span className={`countdown-label ${cls}`}>{label}</span>
       <div className="countdown-bar">
         <div className={`countdown-fill ${cls}`} style={{ width: `${pct}%` }} />

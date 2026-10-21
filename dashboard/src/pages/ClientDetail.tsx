@@ -52,7 +52,7 @@ export function ClientDetail({ id, onBack }: Props) {
             <strong>{client.name || "Sans nom"}</strong>
             <div className="meta">
               {client.owner_name}
-              {client.phone ? ` \u00b7 ${client.phone}` : ""}
+              {client.phone ? ` · ${client.phone}` : ""}
             </div>
           </div>
           <div className="acc-tier">
@@ -66,9 +66,9 @@ export function ClientDetail({ id, onBack }: Props) {
 
         <div className="acc-body">
           <div style={{ fontSize: 13, color: "var(--muted)" }}>
-            <div>Palier : <strong>{fmtFcfa(subscription.plan_price)}/mois</strong> \u00b7 {subscription.max_devices} appareils</div>
+            <div>Palier : <strong>{fmtFcfa(subscription.plan_price)}/mois</strong> · {subscription.max_devices} appareils</div>
             <div>Expire dans : <strong>{daysLeftOf(subscription.expiry_date, now)} j</strong> (le {fmtDate(subscription.expiry_date)})</div>
-            <div>Cr\u00e9\u00e9 le {fmtDate(client.created_at)}</div>
+            <div>Créé le {fmtDate(client.created_at)}</div>
           </div>
 
           {data.shops.length > 0 && (
@@ -77,8 +77,8 @@ export function ClientDetail({ id, onBack }: Props) {
                 <li key={d.device_id}>
                   <span className={`dot ${d.last_sync_at && now - d.last_sync_at < ONLINE_WINDOW_MS ? "on" : "off"}`} />
                   <div className="device-main">
-                    <strong>{d.store_name || "\u2014"}</strong>
-                    <span className="mono meta">{d.device_id.length > 18 ? `${d.device_id.slice(0, 8)}\u2026${d.device_id.slice(-6)}` : d.device_id}</span>
+                    <strong>{d.store_name || "—"}</strong>
+                    <span className="mono meta">{d.device_id.length > 18 ? `${d.device_id.slice(0, 8)}…${d.device_id.slice(-6)}` : d.device_id}</span>
                   </div>
                   <span className="meta" title={fmtDateTime(d.last_sync_at)}>
                     {d.last_sync_at ? `sync ${fmtDateTime(d.last_sync_at)}` : "jamais"}
@@ -122,11 +122,11 @@ export function ClientDetail({ id, onBack }: Props) {
               </div>
             ))
           ) : (
-            <div className="muted">Aucun paiement enregistr\u00e9.</div>
+            <div className="muted">Aucun paiement enregistré.</div>
           )}
         </div>
         <div className="history">
-          <h3>Ordres r\u00e9cents</h3>
+          <h3>Ordres récents</h3>
           {data.commands?.length ? (
             data.commands.map((c: any) => (
               <div className="history-item" key={c.id}>
@@ -134,11 +134,11 @@ export function ClientDetail({ id, onBack }: Props) {
                 <span className="muted mono">le {fmtDate(c.created_at)}</span>
                 {c.payload.days != null && <span className="muted">+{c.payload.days} j</span>}
                 {c.payload.amount_fcfa != null && <span className="muted mono">{fmtFcfa(c.payload.amount_fcfa)}</span>}
-                {c.payload.message_text && <span className="muted">\u00ab {c.payload.message_text} \u00bb</span>}
+                {c.payload.message_text && <span className="muted">« {c.payload.message_text} »</span>}
               </div>
             ))
           ) : (
-            <div className="muted">Aucun ordre envoy\u00e9.</div>
+            <div className="muted">Aucun ordre envoyé.</div>
           )}
         </div>
       </div>

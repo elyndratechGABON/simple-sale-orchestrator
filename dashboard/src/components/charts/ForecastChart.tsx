@@ -6,7 +6,7 @@ export function ForecastChart({ forecast, currentMrr }: { forecast: ForecastMont
     return (
       <div className="chart-empty">
         <ChartIcon size={22} />
-        Aucune donn\u00e9e pr\u00e9visionnelle.
+        Aucune donnée prévisionnelle.
       </div>
     );
   const W = 640;
@@ -60,7 +60,7 @@ export function ForecastChart({ forecast, currentMrr }: { forecast: ForecastMont
         />
       )}
       <rect x={W - 130} y={PAD} width="10" height="10" fill="var(--accent)" rx="2" />
-      <text x={W - 115} y={PAD + 9} fontSize="9" fill="var(--text)">MRR projet\u00e9</text>
+      <text x={W - 115} y={PAD + 9} fontSize="9" fill="var(--text)">MRR projeté</text>
       {forecast.some((f) => f.churn_fcfa > 0) && (
         <>
           <line x1={W - 130} y1={PAD + 18} x2={W - 120} y2={PAD + 18} stroke="var(--danger)" strokeWidth="1.5" strokeDasharray="4 3" opacity="0.6" />

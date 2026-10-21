@@ -44,14 +44,14 @@ function Login({ onLogin }: { onLogin: () => void }) {
           </span>
           <h1>ELYNDRA CONTROL CENTER</h1>
         </div>
-        <p className="lead">Console marchand \u2014 abonnements, comptes et \u00e9crans de caisse.</p>
+        <p className="lead">Console marchand — abonnements, comptes et écrans de caisse.</p>
         <label htmlFor="login-project">Projet (vide = administrateur)</label>
         <input
           id="login-project"
           list="known-projects"
           value={project}
           onChange={(e) => setProject(e.target.value)}
-          placeholder="Caisse, resto-yaounde\u2026"
+          placeholder="Caisse, resto-yaounde…"
           autoFocus
           autoComplete="off"
         />
@@ -66,7 +66,7 @@ function Login({ onLogin }: { onLogin: () => void }) {
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          placeholder="\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
+          placeholder="••••••••"
         />
         <button className="btn btn-primary" type="submit" disabled={!password}>
           Se connecter
@@ -150,7 +150,7 @@ function App() {
       {requestAlert && (
         <div className="alert-banner new-account">
           <span>
-            Nouvelle demande d'abonnement : <strong>{requestAlert.store_name}</strong> \u2014{" "}
+            Nouvelle demande d'abonnement : <strong>{requestAlert.store_name}</strong> —{" "}
             {requestAlert.plan_price.toLocaleString("fr-FR")} F ({requestAlert.plan_devices} appareils)
           </span>
           <button

@@ -5,7 +5,7 @@ import { InboxIcon } from "../icons";
 
 const LEVEL_LABEL: Record<string, string> = {
   info: "Info",
-  success: "Succ\u00e8s",
+  success: "Succès",
   warn: "Avertissement",
   error: "Erreur",
 };
@@ -32,7 +32,7 @@ export function Activite() {
         setReady(true);
         setError("");
       } catch {
-        if (alive) setError("Impossible de charger l'activit\u00e9.");
+        if (alive) setError("Impossible de charger l'activité.");
       }
     };
     load();
@@ -49,8 +49,8 @@ export function Activite() {
       ) : events.length === 0 ? (
         <div className="empty">
           <InboxIcon size={28} />
-          <strong>Aucune activit\u00e9</strong>
-          Les \u00e9v\u00e9nements apparaissent au fil des synchronisations.
+          <strong>Aucune activité</strong>
+          Les événements apparaissent au fil des synchronisations.
         </div>
       ) : (
         <div className="table-wrap">
@@ -59,7 +59,7 @@ export function Activite() {
               <tr>
                 <th>Niveau</th>
                 <th>Type</th>
-                <th>\u00c9v\u00e9nement</th>
+                <th>Événement</th>
                 <th>Quand</th>
               </tr>
             </thead>

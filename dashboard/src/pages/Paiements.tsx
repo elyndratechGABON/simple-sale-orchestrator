@@ -66,15 +66,15 @@ export function Paiements() {
           <div className="v">{fmtFcfa(summary.month)}</div>
         </div>
         <div className="stat">
-          <div className="k">Re\u00e7us (SMS)</div>
+          <div className="k">Reçus (SMS)</div>
           <div className="v">{smsPayments.length}</div>
         </div>
         <div className="stat">
-          <div className="k">\u00c0 v\u00e9rifier</div>
+          <div className="k">À vérifier</div>
           <div className="v warn">{summary.pending}</div>
         </div>
         <div className="stat">
-          <div className="k">Confirm\u00e9s</div>
+          <div className="k">Confirmés</div>
           <div className="v ok">{summary.confirmed}</div>
         </div>
         <div className="stat">
@@ -95,14 +95,14 @@ export function Paiements() {
           {smsPayments.length === 0 ? (
             <div className="chart-empty">
               <InboxIcon size={22} />
-              {ready ? "Aucun paiement SMS re\u00e7u." : "Chargement\u2026"}
+              {ready ? "Aucun paiement SMS reçu." : "Chargement…"}
             </div>
           ) : (
             <div className="sms-panel">
               {processed.length > 0 && (
                 <>
                   <div className="sms-group-title">
-                    <span className="legend-dot ok" /> Valid\u00e9s ({processed.length})
+                    <span className="legend-dot ok" /> Validés ({processed.length})
                   </div>
                   <ul className="sms-list">
                     {processed.slice(0, 6).map((p) => (
@@ -112,7 +112,7 @@ export function Paiements() {
                         </span>
                         <span className="sms-amount ok">{p.amount_fcfa.toLocaleString("fr-FR")} F</span>
                         <span className="sms-sub">
-                          {p.matched_account_name ? `\u2192 ${p.matched_account_name}` : ""} \u00b7 {fmtDateShort(p.received_at)}
+                          {p.matched_account_name ? `→ ${p.matched_account_name}` : ""} · {fmtDateShort(p.received_at)}
                         </span>
                       </li>
                     ))}
@@ -123,7 +123,7 @@ export function Paiements() {
               {unmatched.length > 0 && (
                 <>
                   <div className="sms-group-title">
-                    <span className="legend-dot" style={{ background: "var(--warn)" }} /> \u00c0 v\u00e9rifier ({unmatched.length})
+                    <span className="legend-dot" style={{ background: "var(--warn)" }} /> À vérifier ({unmatched.length})
                   </div>
                   <ul className="sms-list">
                     {unmatched.slice(0, 10).map((p) => (
@@ -132,7 +132,7 @@ export function Paiements() {
                           <strong>{p.name}</strong> ({p.phone})
                         </span>
                         <span className="sms-amount warn">{p.amount_fcfa.toLocaleString("fr-FR")} F</span>
-                        <span className="sms-sub">{p.error ?? ""} \u00b7 {fmtDateShort(p.received_at)}</span>
+                        <span className="sms-sub">{p.error ?? ""} · {fmtDateShort(p.received_at)}</span>
                         <button
                           type="button"
                           className="btn btn-sm"
@@ -148,17 +148,17 @@ export function Paiements() {
 
               {duplicates.length > 0 && (
                 <div className="sms-duplicates">
-                  <span className="legend-dot" style={{ background: "var(--muted)" }} /> {duplicates.length} doublon(s) ignor\u00e9(s)
+                  <span className="legend-dot" style={{ background: "var(--muted)" }} /> {duplicates.length} doublon(s) ignoré(s)
                 </div>
               )}
 
               {pickFor && (
                 <div className="sms-picker">
-                  <span className="muted">Relier \u00ab {pickFor.name} \u00bb ({pickFor.amount_fcfa.toLocaleString("fr-FR")} F) \u00e0 :</span>
+                  <span className="muted">Relier « {pickFor.name} » ({pickFor.amount_fcfa.toLocaleString("fr-FR")} F) à :</span>
                   <select value={pickAccountId} onChange={(e) => setPickAccountId(e.target.value)} className="st-input">
-                    <option value="">\u2014 Choisir un compte \u2014</option>
+                    <option value="">— Choisir un compte —</option>
                     {accounts.map((a) => (
-                      <option key={a.id} value={a.id}>{a.name} ({a.phone ?? "sans t\u00e9l."})</option>
+                      <option key={a.id} value={a.id}>{a.name} ({a.phone ?? "sans tél."})</option>
                     ))}
                   </select>
                   <button type="button" className="btn" disabled={!pickAccountId} onClick={() => { if (pickAccountId) handleProcess(pickFor.id, Number(pickAccountId)); }}>
@@ -189,8 +189,8 @@ export function Paiements() {
                     <th>Montant</th>
                     <th>Statut</th>
                     <th>Source</th>
-                    <th>R\u00e9f\u00e9rence</th>
-                    <th>Re\u00e7u</th>
+                    <th>Référence</th>
+                    <th>Reçu</th>
                   </tr>
                 </thead>
                 <tbody>

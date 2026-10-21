@@ -33,7 +33,7 @@ export function Abonnements() {
     setBusy(true);
     try {
       await approveRequest(req.id);
-      setNotice(`Abonnement de \u00ab ${req.store_name || req.account_name} \u00bb valid\u00e9.`);
+      setNotice(`Abonnement de « ${req.store_name || req.account_name} » validé.`);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur.");
@@ -46,7 +46,7 @@ export function Abonnements() {
     setBusy(true);
     try {
       await rejectRequest(req.id);
-      setNotice(`Demande de \u00ab ${req.store_name || req.account_name} \u00bb refus\u00e9e.`);
+      setNotice(`Demande de « ${req.store_name || req.account_name} » refusée.`);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur.");
@@ -98,14 +98,14 @@ export function Abonnements() {
                   <strong>{r.store_name || "Boutique"}</strong>
                   <div className="meta">
                     {r.owner_name}
-                    {r.account_phone ? ` \u00b7 ${r.account_phone}` : ""}
+                    {r.account_phone ? ` · ${r.account_phone}` : ""}
                   </div>
                 </div>
-                <div className="acc-tier" title="Montant encaiss\u00e9 et palier demand\u00e9">
+                <div className="acc-tier" title="Montant encaissé et palier demandé">
                   <BanknoteIcon size={14} />
                   <span className="mono">{fmtFcfa(r.plan_price)}</span>
                   {r.plan_devices > 0 && (
-                    <span className="badge delivered" title="Palier demand\u00e9">{r.plan_devices} appareils</span>
+                    <span className="badge delivered" title="Palier demandé">{r.plan_devices} appareils</span>
                   )}
                   {r.plan_name && <span className="muted">{r.plan_name}</span>}
                 </div>
@@ -113,16 +113,16 @@ export function Abonnements() {
                   {r.status === "pending" ? (
                     <span className="badge pending">En attente</span>
                   ) : r.status === "approved" ? (
-                    <span className="badge delivered">Valid\u00e9e</span>
+                    <span className="badge delivered">Validée</span>
                   ) : (
-                    <span className="badge superseded">Refus\u00e9e</span>
+                    <span className="badge superseded">Refusée</span>
                   )}
                 </div>
               </header>
 
               <div className="acc-body">
                 <div className="history">
-                  <h3>D\u00e9p\u00f4t du marchand \u2014 {fmtDateTime(r.created_at)}</h3>
+                  <h3>Dépôt du marchand — {fmtDateTime(r.created_at)}</h3>
                   <div className="history-item">
                     <StoreIcon size={14} />
                     <span>
@@ -133,7 +133,7 @@ export function Abonnements() {
                   {r.reference && (
                     <div className="history-item">
                       <BanknoteIcon size={14} />
-                      <span>R\u00e9f\u00e9rence mobile money :</span>
+                      <span>Référence mobile money :</span>
                       <span className="mono">{r.reference}</span>
                     </div>
                   )}
@@ -143,7 +143,7 @@ export function Abonnements() {
                   <div className="row-actions">
                     <button className="btn btn-sm btn-primary" onClick={() => handleApprove(r)} disabled={busy}>
                       <BanknoteIcon size={13} />
-                      Valider \u2014 prolonger le compte
+                      Valider — prolonger le compte
                     </button>
                     <button className="btn btn-sm btn-danger-ghost" onClick={() => handleReject(r)} disabled={busy}>
                       <XIcon size={13} />
@@ -152,8 +152,8 @@ export function Abonnements() {
                   </div>
                 ) : (
                   <div className="row-actions muted">
-                    {r.status === "approved" ? "Prolongation appliqu\u00e9e au compte" : "Aucune action"}
-                    {r.decided_at != null && <>\u00b7 d\u00e9cision le {fmtDateTime(r.decided_at)}</>}
+                    {r.status === "approved" ? "Prolongation appliquée au compte" : "Aucune action"}
+                    {r.decided_at != null && <>· décision le {fmtDateTime(r.decided_at)}</>}
                   </div>
                 )}
               </div>
@@ -163,7 +163,7 @@ export function Abonnements() {
           <div className="empty">
             <InboxIcon size={28} />
             <strong>Aucune demande en attente</strong>
-            Les caisses d\u00e9posent leurs demandes apr\u00e8s un paiement mobile money.
+            Les caisses déposent leurs demandes après un paiement mobile money.
           </div>
         )}
       </div>
