@@ -129,6 +129,22 @@ test("supprimer sa boutique libère l'EMPREINTE de l'appareil", () => {
   assert.match(block, /canReleaseSeat\(\{ accountProof, selfProof, isAnchor \}\)/);
 });
 
+test("le relais expose la preuve de vie des écrans du groupe", () => {
+  // « Jamais » affiché en permanence sur la ligne du patron : le registre local ne
+  // sait rien de l'écran courant (il ne s'envoie rien à lui-même). Le relais, lui,
+  // sait quand chaque appareil a TIRÉ ses opérations — la seule mesure honnête de
+  // « cet écran est-il là ».
+  const handler = readFileSync(new URL("../../relay/handler.mjs", import.meta.url), "utf8");
+  assert.match(handler, /case "\/api\/v1\/ops\/peers"/);
+  assert.match(handler, /SELECT device_id, last_pulled_at FROM device_pull WHERE shop_id = \$1/);
+  // Lecture seule, comme le tir lui-même.
+  const block = handler.slice(
+    handler.indexOf('case "/api/v1/ops/peers"'),
+    handler.indexOf('case "/api/v1/ops/purge"'),
+  );
+  assert.ok(!/requireOpsToken/.test(block), "la lecture des tirages ne doit rien exiger de plus");
+});
+
 test("le secret admin n'est pas un mot de passe devinable", () => {
   // Le fallback historique était un hex de 8 caractères : 2^32, épuisable. On vérifie
   // surtout que la valeur SEULE ne suffit pas à ouvrir quoi que ce soit — la vraie

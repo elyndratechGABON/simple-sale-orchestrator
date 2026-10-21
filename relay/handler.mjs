@@ -339,6 +339,35 @@ export async function handleRequest(req, res) {
         return json(res, 405, { error: "méthode non autorisée" });
       }
 
+      case "/api/v1/ops/peers": {
+        // QUAND chaque écran du groupe a tiré ses opérations. C'est la seule preuve
+        // de VIE d'un écran : le registre local dit « quand cet écran nous a-t-il
+        // envoyé quelque chose », ce qui reste « Jamais » pour un employé qui vend
+        // peu — et l'écran du patron se lisait « Jamais » en permanence, faute de
+        // champ. Ici, on dit la vérité : il a tiré il y a 2 min, il est vivant.
+        //
+        // Lecture seule, comme le tir lui-même : le `shop_id` est la clé du groupe,
+        // et les opérations qu'il protège portent leur signature.
+        if (req.method !== "GET") return json(res, 405, { error: "méthode non autorisée" });
+        const shopId = url.searchParams.get("shop_id") ?? "";
+        if (!shopId) return json(res, 400, { error: "shop_id requis." });
+        const client = await p.connect();
+        try {
+          const { rows } = await client.query(
+            "SELECT device_id, last_pulled_at FROM device_pull WHERE shop_id = $1 ORDER BY last_pulled_at DESC",
+            [shopId],
+          );
+          return json(res, 200, {
+            peers: rows.map((r) => ({
+              device_id: r.device_id,
+              last_pulled_at: Number(r.last_pulled_at),
+            })),
+          });
+        } finally {
+          client.release();
+        }
+      }
+
       case "/api/v1/ops/purge": {
         if (req.method !== "POST") return json(res, 405, { error: "méthode non autorisée" });
         if (!requireOpsToken(req, res)) return;
