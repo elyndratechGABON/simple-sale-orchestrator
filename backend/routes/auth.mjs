@@ -1,6 +1,5 @@
 // Connexion du dashboard + SSE temps réel + sessions (scopées par projet).
 import { Router } from "express";
-import { randomUUID } from "node:crypto";
 import { SESSION_MS, ADMIN_PASSWORD, projectById, projectConfig, db } from "../config.mjs";
 import { str, byDeviceId, accountById, accountOriginOk, hashPassword, verifyPassword } from "../lib.mjs";
 
@@ -11,13 +10,70 @@ import { logActivity } from "./audit.mjs";
 
 const router = Router();
 
-// ── Sessions admin (en mémoire, scopées par projet) ───────────────────────────────
-export const sessions = new Map(); // token → { scope: "master" } | { scope: "project", project, name }
+// ── Sessions admin (SANS ÉTAT : un token signé) ───────────────────────────────────
+//
+// ⚠️ Pourquoi ce changement : les sessions tenaient dans une Map EN MÉMOIRE. En
+// serverless, chaque requête peut atterrir sur une instance différente — la session
+// créée sur l'instance A n'existait pas sur l'instance B : le dashboard se
+// déconnectait tout seul, au hasard, selon la répartition du trafic. C'était
+// invisible en local (une seule instance) et permanent en production.
+//
+// Le jeton est donc AUTO-PORTEUR : il porte la portée, l'échéance, et sa SIGNATURE
+// (HMAC-SHA256). Aucune mémoire, aucune instance partagée : la vérification se fait
+// n'importe où, et l'expiration est dans le jeton.
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+const SESSION_SECRET = String(
+  process.env.SESSION_SECRET ?? process.env.BACKUP_KEY ?? ADMIN_PASSWORD,
+);
+
+/**
+ * Une session admin : la portée, l'échéance.
+ * @typedef {{ scope: "master" | "project", project?: string | null, name?: string | null, expires: number }} AdminSession
+ */
+
+/** Signe une session : le corps est lisible, la signature empêche d'en forger une. */
+export function signSession(session) {
+  const payload = {
+    scope: session.scope,
+    project: session.project ?? null,
+    name: session.name ?? null,
+    exp: session.expires ?? Date.now() + SESSION_MS,
+  };
+  const body = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  const sig = createHmac("sha256", SESSION_SECRET).update(body).digest("base64url");
+  return `${body}.${sig}`;
+}
+
+/** Vérifie un jeton : signature d'abord, expiration ensuite. `null` si invalide. */
+export function verifySessionToken(token) {
+  if (!token || !token.includes(".")) return null;
+  const [body, sig] = token.split(".");
+  if (!body || !sig) return null;
+  const attendu = createHmac("sha256", SESSION_SECRET).update(body).digest("base64url");
+  const a = Buffer.from(sig);
+  const b = Buffer.from(attendu);
+  // Comparaison à temps constant, et de même longueur : sinon la comparaison
+  // renvoie un écart exploitable octet par octet.
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
+    if (!payload?.exp || payload.exp <= Date.now()) return null;
+    if (payload.scope !== "master" && payload.scope !== "project") return null;
+    return {
+      scope: payload.scope,
+      project: payload.project ?? null,
+      name: payload.name ?? null,
+      expires: payload.exp,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function sessionOf(req) {
   const token = (req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
-  const session = sessions.get(token);
-  if (!session || session.expires <= Date.now()) return null;
-  return session;
+  return verifySessionToken(token);
 }
 export function requireAdmin(req, res, next) {
   if (!sessionOf(req)) return res.status(401).json({ error: "Authentification requise." });
@@ -104,9 +160,7 @@ router.post("/api/login", async (req, res) => {
     session = { scope: "master", expires: Date.now() + SESSION_MS };
   }
   clearLoginFail(ip);
-  for (const [t, e] of sessions) if (e.expires <= Date.now()) sessions.delete(t);
-  const token = randomUUID();
-  sessions.set(token, session);
+  const token = signSession(session);
   console.log(
     `[${new Date().toISOString()}] LOGIN ${session.scope === "master" ? "master" : `projet "${session.name}"`} ip=${req.socket.remoteAddress} -> OK`,
   );
