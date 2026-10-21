@@ -104,6 +104,25 @@ test("la place d'un écran qui part est rendue, et le quota ne la compte plus", 
   );
 });
 
+test("supprimer sa boutique libère l'EMPREINTE de l'appareil", () => {
+  // Le symptôme : l'utilisateur a tout effacé sur son téléphone, il le reconnecte, et
+  // le serveur refuse : « Cet appareil est déjà enregistré sous la boutique X ». La
+  // fiche du serveur garde l'empreinte du téléphone — il faut la libérer au moment
+  // de la suppression, PAS seulement la place.
+  const entry = readFileSync(new URL("../routes/entry.mjs", import.meta.url), "utf8");
+  // La route existe sous SON nom explicite (et l'ancien chemin reste).
+  assert.match(entry, /router\.post\("\/api\/v1\/devices\/release"/);
+  assert.match(entry, /router\.post\("\/api\/v1\/entry\/release"/);
+  // L'empreinte présentée est détachée de la fiche qui la portait.
+  assert.match(entry, /device_fingerprint = NULL, updated_at = \$1 WHERE device_id = \$2/);
+  // … et la preuve exigée : le détenteur du compte de la fiche, jamais un tiers.
+  const start = entry.indexOf("const releaseDevice");
+  assert.ok(start > 0, "handler de libération introuvable");
+  const block = entry.slice(start, entry.indexOf("router.post(\"/api/v1/devices/release\"", start));
+  assert.match(block, /accountProofFor\(holderAccount\.id\)/);
+  assert.match(block, /holderAccount \? await accountProofFor/);
+});
+
 test("le secret admin n'est pas un mot de passe devinable", () => {
   // Le fallback historique était un hex de 8 caractères : 2^32, épuisable. On vérifie
   // surtout que la valeur SEULE ne suffit pas à ouvrir quoi que ce soit — la vraie

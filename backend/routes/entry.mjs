@@ -717,10 +717,12 @@ router.post("/api/v1/account/bless", async (req, res) => {
   res.json({ status: "blessed", account_id: account.id, account_name: account.name });
 });
 
-// ── Protocole : libération de place ─────────────────────────────────────────
-// Un écran qui quitte le commerce (démission, remplacement) rend sa place. Sans
-// cette route, le quota compte les écrans À VIE : un commerce qui a eu un employé
-// ne peut plus en recrouver un autre, même après son départ.
+// ── Protocole : libération d'appareil (place + empreinte) ─────────────────────
+// Un écran qui quitte le commerce (démission, suppression de boutique) rend sa
+// PLACE. Il rend aussi son EMPREINTE : sans cela, le serveur garde l'appareil lié
+// à l'ancienne boutique pour toujours, et le téléphone se voit refuser toute
+// nouvelle inscription (« Cet appareil est déjà enregistré… ») alors qu'il a été
+// remis à zéro.
 //
 // Deux preuves acceptées :
 //  - le DÉTENTEUR DU COMPTE (téléphone + mot de passe) — c'est le patron qui libère
@@ -731,54 +733,106 @@ router.post("/api/v1/account/bless", async (req, res) => {
 //
 // La place FONDATRICE (le plus ancien écran du compte) ne se rend pas sur une
 // simple auto-déclaration : seul le détenteur du compte peut en décider.
-router.post("/api/v1/entry/release", async (req, res) => {
+const releaseDevice = async (req, res) => {
   const device_id = str(req.body?.device_id);
   const store_name = str(req.body?.store_name);
-  if (!device_id) return res.status(400).json({ error: "device_id requis." });
+  const fingerprint = optStr(req.body?.fingerprint);
+  if (!device_id && !fingerprint) {
+    return res.status(400).json({ error: "device_id ou fingerprint requis." });
+  }
 
-  const target = await byDeviceId(device_id);
-  // Écran déjà inconnu, déjà libéré : la place est libre de toute façon.
-  if (!target || target.released_at) return res.json({ ok: true, released: false });
-
-  const account = target.account_id
-    ? await resolveAccount(await accountById(target.account_id))
-    : null;
-
-  // Preuve 1 — le compte : téléphone + mot de passe du détenteur.
+  // Preuve du COMPTE, évaluée pour un compte donné : téléphone + mot de passe.
   const accPhone = normPhone(str(req.body?.account_phone));
   const accPassword = str(req.body?.account_password);
-  let accountProof = false;
-  if (account && accPhone && accPassword) {
+  const accountProofFor = async (accountId) => {
+    if (!accountId || !accPhone || !accPassword) return false;
     const presented = await accountByPhone(accPhone);
-    if (presented && presented.id === account.id && verifyPassword(accPassword, presented.password)) {
-      accountProof = true;
+    if (!presented) return false;
+    const resolved = await resolveAccount(presented);
+    return (
+      Boolean(resolved) &&
+      resolved.id === accountId &&
+      verifyPassword(accPassword, presented.password)
+    );
+  };
+
+  // 1. L'EMPREINTE, même quand l'identifiant d'appareil a changé (réinstallation :
+  //    l'application a été supprimée, la nouvelle identité a un autre device_id).
+  //    Sans cela, le téléphone garde son mur « appareil déjà enregistré » alors que
+  //    l'utilisateur a tout effacé.
+  let fingerprintReleased = false;
+  if (fingerprint) {
+    const holder = await db.get(
+      "SELECT device_id, store_name, account_id FROM shops WHERE device_fingerprint = $1",
+      fingerprint,
+    );
+    if (holder && holder.device_id !== device_id) {
+      const holderAccount = holder.account_id
+        ? await resolveAccount(await accountById(holder.account_id))
+        : null;
+      // Preuve : le détenteur du compte de la fiche, OU une fiche sans compte (le
+      // détenteur de l'empreinte la libère). Jamais une fiche d'un compte tiers.
+      const proof = holderAccount ? await accountProofFor(holderAccount.id) : true;
+      if (proof) {
+        await db.run(
+          "UPDATE shops SET device_fingerprint = NULL, updated_at = $1 WHERE device_id = $2",
+          Date.now(),
+          holder.device_id,
+        );
+        fingerprintReleased = true;
+        console.log(
+          `[${new Date().toISOString()}] EMPREINTE LIBÉRÉE : ${fingerprint.slice(0, 12)}… ` +
+            `détachée de « ${holder.store_name} » (${holder.device_id})`,
+        );
+      }
     }
   }
 
-  // Preuve 2 — l'écran lui-même : il connaît son identifiant ET son nom de boutique.
-  // L'enseigne présentée peut être celle du commerce (le QR recopie le nom du patron
-  // dans la fiche locale) : les deux sont acceptées.
-  const presentedName = normName(store_name);
-  const selfProof = Boolean(
-    presentedName &&
-      (presentedName === normName(target.store_name) ||
-        (account && presentedName === normName(account.name))),
-  );
+  // 2. L'écran visé : sa place est rendue (la fiche reste, pour l'historique).
+  let released = false;
+  let refused = false;
+  const target = device_id ? await byDeviceId(device_id) : null;
+  if (target && !target.released_at) {
+    const account = target.account_id
+      ? await resolveAccount(await accountById(target.account_id))
+      : null;
+    const accountProof = await accountProofFor(account?.id);
+    // Preuve de soi : l'écran connaît son identifiant ET son nom de boutique.
+    // L'enseigne présentée peut être celle du commerce (le QR recopie le nom du patron
+    // dans la fiche locale) : les deux sont acceptées.
+    const presentedName = normName(store_name);
+    const selfProof = Boolean(
+      presentedName &&
+        (presentedName === normName(target.store_name) ||
+          (account && presentedName === normName(account.name))),
+    );
+    const anchor = account ? await accountAnchorDevice(account.id) : null;
+    const isAnchor = Boolean(anchor && anchor.device_id === target.device_id);
 
-  const anchor = account ? await accountAnchorDevice(account.id) : null;
-  const isAnchor = Boolean(anchor && anchor.device_id === target.device_id);
-
-  if (!canReleaseSeat({ accountProof, selfProof, isAnchor })) {
-    return res.status(403).json({ error: "Preuve insuffisante pour rendre cette place." });
+    if (canReleaseSeat({ accountProof, selfProof, isAnchor })) {
+      await releaseShopSeat(device_id);
+      await db.run("DELETE FROM device_credentials WHERE device_id = $1", [device_id]);
+      released = true;
+      console.log(
+        `[${new Date().toISOString()}] PLACE LIBÉRÉE : écran ${device_id} (${target.store_name}) ` +
+          `quitte le compte #${target.account_id ?? "—"} — preuve : ${accountProof ? "compte" : "auto-déclaration"}`,
+      );
+    } else {
+      refused = true;
+    }
   }
 
-  await releaseShopSeat(device_id);
-  await db.run("DELETE FROM device_credentials WHERE device_id = $1", [device_id]);
-  console.log(
-    `[${new Date().toISOString()}] PLACE LIBÉRÉE : écran ${device_id} (${target.store_name}) ` +
-      `quitte le compte #${target.account_id ?? "—"} — preuve : ${accountProof ? "compte" : "auto-déclaration"}`,
-  );
-  res.json({ ok: true, released: true, device_id });
-});
+  // Refus franc quand RIEN n'a pu être libéré : le client doit le savoir.
+  if (refused && !fingerprintReleased) {
+    return res.status(403).json({ error: "Preuve insuffisante pour libérer cet appareil." });
+  }
+  res.json({ ok: true, released, fingerprint_released: fingerprintReleased, device_id });
+};
+
+// Deux noms, un seul geste : `/api/v1/devices/release` (nom explicite) et
+// `/api/v1/entry/release` (chemin du protocole caisse, conservé pour les caisse
+// déjà déployées).
+router.post("/api/v1/devices/release", releaseDevice);
+router.post("/api/v1/entry/release", releaseDevice);
 
 export default router;
