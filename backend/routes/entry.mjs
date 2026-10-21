@@ -766,25 +766,26 @@ const releaseDevice = async (req, res) => {
       "SELECT device_id, store_name, account_id FROM shops WHERE device_fingerprint = $1",
       fingerprint,
     );
-    if (holder && holder.device_id !== device_id) {
-      const holderAccount = holder.account_id
-        ? await resolveAccount(await accountById(holder.account_id))
-        : null;
-      // Preuve : le détenteur du compte de la fiche, OU une fiche sans compte (le
-      // détenteur de l'empreinte la libère). Jamais une fiche d'un compte tiers.
-      const proof = holderAccount ? await accountProofFor(holderAccount.id) : true;
-      if (proof) {
-        await db.run(
-          "UPDATE shops SET device_fingerprint = NULL, updated_at = $1 WHERE device_id = $2",
-          Date.now(),
-          holder.device_id,
-        );
-        fingerprintReleased = true;
-        console.log(
-          `[${new Date().toISOString()}] EMPREINTE LIBÉRÉE : ${fingerprint.slice(0, 12)}… ` +
-            `détachée de « ${holder.store_name} » (${holder.device_id})`,
-        );
-      }
+    if (holder) {
+      // L'EMPREINTE est la signature MATÉRIELLE de l'appareil : l'appareil qui la
+      // présente se détache lui-même, sans avoir autre chose à prouver. (Un employé
+      // qui a rejoint par QR n'a pas le mot de passe du compte ; un téléphone
+      // réinstallé n'a plus d'identifiant d'écran — dans les deux cas, sa place
+      // matérielle doit pouvoir être rendue.)
+      //
+      // La PLACE, elle, garde sa preuve stricte : un compte ne se vide pas sur une
+      // empreinte, seulement sur des identifiants de compte ou la déclaration de
+      // l'écran concerné.
+      await db.run(
+        "UPDATE shops SET device_fingerprint = NULL, updated_at = $1 WHERE device_id = $2",
+        Date.now(),
+        holder.device_id,
+      );
+      fingerprintReleased = true;
+      console.log(
+        `[${new Date().toISOString()}] EMPREINTE LIBÉRÉE : ${fingerprint.slice(0, 12)}… ` +
+          `détachée de « ${holder.store_name} » (${holder.device_id})`,
+      );
     }
   }
 

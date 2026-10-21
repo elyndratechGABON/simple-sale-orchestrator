@@ -115,12 +115,18 @@ test("supprimer sa boutique libère l'EMPREINTE de l'appareil", () => {
   assert.match(entry, /router\.post\("\/api\/v1\/entry\/release"/);
   // L'empreinte présentée est détachée de la fiche qui la portait.
   assert.match(entry, /device_fingerprint = NULL, updated_at = \$1 WHERE device_id = \$2/);
-  // … et la preuve exigée : le détenteur du compte de la fiche, jamais un tiers.
+  // L'empreinte est la signature MATÉRIELLE de l'appareil : il se détache lui-même,
+  // sans avoir à présenter le mot de passe du compte (un employé qui a rejoint par QR
+  // ne l'a pas ; un téléphone réinstallé n'a plus d'identifiant d'écran).
   const start = entry.indexOf("const releaseDevice");
   assert.ok(start > 0, "handler de libération introuvable");
-  const block = entry.slice(start, entry.indexOf("router.post(\"/api/v1/devices/release\"", start));
-  assert.match(block, /accountProofFor\(holderAccount\.id\)/);
-  assert.match(block, /holderAccount \? await accountProofFor/);
+  const block = entry.slice(start, entry.indexOf('router.post("/api/v1/devices/release"', start));
+  assert.ok(
+    !/accountProofFor\(holderAccount\.id\)/.test(block),
+    "l'empreinte ne doit pas exiger le mot de passe du compte — l'appareil se détache lui-même",
+  );
+  // … mais la PLACE, elle, garde sa preuve stricte.
+  assert.match(block, /canReleaseSeat\(\{ accountProof, selfProof, isAnchor \}\)/);
 });
 
 test("le secret admin n'est pas un mot de passe devinable", () => {
