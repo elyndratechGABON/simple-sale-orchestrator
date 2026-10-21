@@ -157,12 +157,26 @@ async function accountIdForShop(shopId) {
   }
 
   const deviceIds = [...new Set(remoteOps.map((o) => String(o?.device_id ?? "")).filter(Boolean))];
-  if (deviceIds.length === 0) return null;
+  // Les ops portent l'identité du CANAL P2P (celle de la synchronisation), qui n'est
+  // PAS l'identifiant SERVEUR de la fiche boutique. Les deux désignent le même
+  // téléphone, mais la table `shops` ne connaît que le second. Le lien passe par
+  // l'ANNONCE, qui porte les deux : `device_id` (P2P) et `server_device_id` (serveur).
+  //
+  // Sans ce second jeu d'identifiants, le groupe n'était rattaché à AUCUN compte :
+  // l'archive ne se remplissait jamais, et les opérations du relais partaient à la
+  // purge sans avoir jamais été archivées — donc la restauration d'une boutique
+  // supprimée ne trouvait rien à rendre.
+  const serverIds = [
+    ...new Set(
+      remoteOps.map((o) => String(o?.payload?.server_device_id ?? "")).filter(Boolean),
+    ),
+  ];
+  if (deviceIds.length === 0 && serverIds.length === 0) return null;
 
   const owners = await db.all(
     `SELECT DISTINCT account_id FROM shops
       WHERE device_id = ANY($1::text[]) AND account_id IS NOT NULL`,
-    deviceIds,
+    [...deviceIds, ...serverIds],
   );
   // Plusieurs comptes dans le meme `shop_id` : on refuse. Le relais groupant par
   // `shop_id`, deux commerces peuvent deriver le MEME hash ; attribuer la totalite de
