@@ -9,6 +9,7 @@ import {
   GRACE_PERIOD_MS,
   DAY_MS,
   ONLINE_WINDOW_MS,
+  planNameForDevices,
 } from "./config.mjs";
 import { createHash, randomBytes, webcrypto } from "node:crypto";
 
@@ -263,6 +264,14 @@ export function computeAccountStatus(account) {
 export async function publicAccount(account) {
   const now = Date.now();
   const status = computeAccountStatus(account);
+  // Le compte est-il EN ESSAI ? Un essai, c'est un compte qui n'a JAMAIS payé : le
+  // commerçant doit le voir (et savoir combien de temps il lui reste), pas croire
+  // qu'il est abonné.
+  const payements = await db.get(
+    "SELECT COUNT(*)::int AS c FROM payments WHERE account_id = $1",
+    account.id,
+  );
+  const trial = Number(payements?.c ?? 0) === 0;
   return {
     id: account.id,
     name: account.name,
@@ -275,6 +284,10 @@ export async function publicAccount(account) {
     subscription_price: account.subscription_price ?? 0,
     subscription_end_date: account.expiry_date,
     suspended_at: account.suspended_at ?? null,
+    // Le nom du palier (Essentiel, Confort, Affluence) et l'état essai/abonné : c'est
+    // ce que le commerçant voit dans ses réglages.
+    plan_name: planNameForDevices(account.max_devices),
+    trial,
     // Grace period : si le compte est en grace, renvoyer la date de fin de grace
     // pour que le dashboard puisse afficher un compteur.
     ...(status === "grace" ? { grace_ends_at: account.expiry_date + GRACE_PERIOD_MS } : {}),
