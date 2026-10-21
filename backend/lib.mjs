@@ -10,7 +10,51 @@ import {
   DAY_MS,
   ONLINE_WINDOW_MS,
 } from "./config.mjs";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, webcrypto } from "node:crypto";
+
+/**
+ * Le corps exact couvert par la signature d'une PREUVE DE PAIEMENT.
+ *
+ * Il doit être identique à l'émission et à la vérification : les clés sont donc
+ * ORDONNÉES (jamais l'ordre d'insertion, que le JSON ne garantit pas), et rien
+ * d'autre n'y entre. Les deux côtés (l'application, le serveur) TRIENT les mêmes
+ * clés : réordonner un jour la déclaration d'un côté ne casserait pas les preuves.
+ */
+export function signableProofBody(proof) {
+  const corps = {
+    device_id: proof.device_id,
+    from: proof.from ?? "",
+    received_at: Number(proof.received_at) || 0,
+    sms: proof.sms,
+  };
+  return JSON.stringify(
+    Object.fromEntries(Object.keys(corps).sort().map((k) => [k, corps[k]])),
+  );
+}
+
+/** Vérifie une signature ECDSA P-256 (base64) sur un corps, avec la clé JWK publique. */
+export async function verifyProofSignature(body, signatureB64, publicKeyJwk) {
+  if (!signatureB64 || !publicKeyJwk) return false;
+  try {
+    const jwk = JSON.parse(publicKeyJwk);
+    if (jwk?.kty !== "EC" || jwk?.crv !== "P-256") return false;
+    const key = await webcrypto.subtle.importKey(
+      "jwk",
+      jwk,
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["verify"],
+    );
+    return await webcrypto.subtle.verify(
+      { name: "ECDSA", hash: "SHA-256" },
+      key,
+      Buffer.from(signatureB64, "base64"),
+      new TextEncoder().encode(body),
+    );
+  } catch {
+    return false;
+  }
+}
 
 // ── Réglages GLOBAUX (mode maintenance) ───────────────────────────────────────────
 // Un interrupteur global, lu à CHAQUE handshake : il doit vivre en base — les

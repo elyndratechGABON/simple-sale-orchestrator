@@ -45,6 +45,8 @@ import {
   releaseShopSeat,
   accountAnchorDevice,
   maintenanceState,
+  signableProofBody,
+  verifyProofSignature,
 } from "../lib.mjs";
 import { broadcastStatus, broadcastRequest } from "./auth.mjs";
 import { parseSms } from "../sms-parser.mjs";
@@ -288,9 +290,10 @@ router.post("/api/v1/handshake", async (req, res) => {
          phone          = COALESCE($3, phone),
          location       = COALESCE($4, location),
          app_version_used = COALESCE($5, app_version_used),
-         device_fingerprint = COALESCE($6, device_fingerprint),
-         app_origin     = $7,
-         updated_at     = $8
+          device_fingerprint = COALESCE($6, device_fingerprint),
+          app_origin     = $7,
+          updated_at     = $8,
+          public_key    = COALESCE($10, public_key)
        WHERE id = $9`,
       optStr(body.owner_name),
       optStr(body.store_name),
@@ -303,14 +306,19 @@ router.post("/api/v1/handshake", async (req, res) => {
       app_origin,
       now,
       shop.id,
+      // La clé PUBLIQUE de l'appareil : c'est elle qui permet au serveur de vérifier
+      // ce que l'écran lui envoie (une preuve de paiement signée, par exemple). Elle
+      // est VOLONTAIREMENT écrite à chaque handshake : une rotation de clé ne doit pas
+      // laisser l'écran incapable de prouver quoi que ce soit.
+      optStr(body.device_public_key),
     );
     shop = await byId(shop.id);
   } else {
     await db.run(
       `INSERT INTO shops
          (device_id, owner_name, store_name, phone, location, registration_date,
-          expiry_date, created_at, updated_at, app_version_used, app_origin, device_fingerprint)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+          expiry_date, created_at, updated_at, app_version_used, app_origin, device_fingerprint, public_key)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
       device_id,
       optStr(body.owner_name) ?? "",
       optStr(body.store_name) ?? "Boutique",
@@ -327,6 +335,8 @@ router.post("/api/v1/handshake", async (req, res) => {
       // sera posée au prochain handshake APRÈS la bénédiction, au moment où
       // le mur tranche le conflit via le compte désormais résolu.
       pendingBlessing ? null : device_fingerprint,
+      // La clé publique de l'appareil (voir l'UPDATE ci-dessus).
+      optStr(body.device_public_key),
     );
     shop = await byDeviceId(device_id);
   }
@@ -580,34 +590,23 @@ router.post("/api/v1/requests", async (req, res) => {
   });
 });
 
-// ── Webhook SMS (TextBee → auto-renouvellement d'abonnement) ─────────────────────
-// TextBee forward chaque SMS reçu sur l'appareil vers cette URL. Le serveur :
-//   1. vérifie le token secret (?token=),
-//   2. parse le SMS (montant, téléphone, nom, TID),
-//   3. l'inclut dans sms_payments (TID UNIQUE = 1 traitement par transaction),
-//   4. match le téléphone → compte, et le montant → palier,
-//   5. si tout correspond → applyTierRenewal() = ABONNEMENT RENOUVELÉ automatiquement.
-// Réponse 200 TOUJOURS après insertion : TextBee cesse ses retries. Un SMS non
-// conforme est stocké en 'unmatched' pour révision admin, jamais perdu.
-router.post("/api/v1/webhook/sms", async (req, res) => {
-  if (str(req.query.token) !== SMS_WEBHOOK_TOKEN) {
-    return res.status(401).json({ error: "Token webhook invalide." });
-  }
-  const body = req.body ?? {};
-  // Formes acceptées (selon le payload TextBee) : { sms }, { message }, { text }, { body }.
-  const raw = [body.sms ?? body.message ?? body.text ?? body.body ?? body.content]
-    .flat()
-    .find((s) => typeof s === "string" && s.trim().length > 0);
-  if (!raw) return res.status(400).json({ error: "Aucun SMS reçu." });
-
+// ── Enregistrement d'un SMS de paiement ───────────────────────────────────────────
+// Corps COMMUN du webhook et de la preuve signée envoyée par l'application : le
+// parsing, l'anti-double (TID unique), le rapprochement téléphone + palier, et la
+// MÊME prudence — rien n'est renouvelé automatiquement, la validation reste humaine.
+//
+// `source` dit QUI a brought le SMS : la passerelle (TextBee) ou l'application du
+// marchand elle-même (auto-hébergé). La suite est identique : le client ne gagne
+// aucun pouvoir, il gagne seulement de ne plus dépendre d'un service payant.
+async function recordPaymentSms({ raw, receivedAt, source }) {
   const parsed = parseSms(raw);
   if (!parsed) {
     // SMS non-paiement (marketing, OTP…) : on accuse réception sans le stocker.
-    return res.json({ ok: true, ignored: "not_a_payment_sms" });
+    return { ok: true, ignored: "not_a_payment_sms" };
   }
 
   const now = Date.now();
-  const received_at = Number(body.received_at ?? body.timestamp ?? body.receivedAt) || now;
+  const received_at = receivedAt || now;
 
   // Idempotence : l'insertion échoue si le TID existe déjà (UNIQUE). On bascule alors
   // la ligne existante en 'duplicate' et on arrête — jamais de double renouvellement.
@@ -632,7 +631,7 @@ router.post("/api/v1/webhook/sms", async (req, res) => {
         now,
         parsed.tid,
       );
-      return res.json({ ok: true, duplicate: true, tid: parsed.tid });
+      return { ok: true, duplicate: true, tid: parsed.tid };
     }
     throw e;
   }
@@ -671,16 +670,16 @@ router.post("/api/v1/webhook/sms", async (req, res) => {
       paymentId,
     );
     console.log(
-      `[${new Date().toISOString()}] SMS #${paymentId} EN ATTENTE « ${account.name} » (${parsed.phone}) — ${parsed.amount.toLocaleString("fr-FR")} F, TID ${parsed.tid} — validation admin requise`,
+      `[${new Date().toISOString()}] SMS #${paymentId} EN ATTENTE « ${account.name} » (${parsed.phone}) — ${parsed.amount.toLocaleString("fr-FR")} F, TID ${parsed.tid} — validation admin requise (source: ${source})`,
     );
     // 202 : la requête est ACCUSÉE, pas exécutée. TextBee cesse ses retries, et le
     // front distingue ainsi « à valider » d'un simple rejet.
-    return res.json({
+    return {
       ok: true,
       status: "pending",
       account_id: account.id,
       payment_id: paymentId,
-    });
+    };
   }
 
   const errorReason = !account
@@ -695,7 +694,85 @@ router.post("/api/v1/webhook/sms", async (req, res) => {
   console.log(
     `[${new Date().toISOString()}] SMS #${paymentId} NON MATCHÉ (${errorReason}) — « ${parsed.name} » (${parsed.phone}) ${parsed.amount} F, TID ${parsed.tid}`,
   );
-  return res.json({ ok: true, status: "unmatched", payment_id: paymentId, error: errorReason });
+  return { ok: true, status: "unmatched", payment_id: paymentId, error: errorReason };
+}
+
+// ── Webhook SMS (TextBee → demande de renouvellement d'abonnement) ───────────────
+// TextBee forward chaque SMS reçu sur l'appareil vers cette URL. Le serveur :
+//   1. vérifie le token secret (?token=),
+//   2. parse le SMS (montant, téléphone, nom, TID),
+//   3. l'inclut dans sms_payments (TID UNIQUE = 1 traitement par transaction),
+//   4. match le téléphone → compte, et le montant → palier,
+//   5. le paiement part en VALIDATION HUMAINE (Control Center) — jamais de
+//      renouvellement automatique.
+// Réponse 200 TOUJOURS après insertion : TextBee cesse ses retries. Un SMS non
+// conforme est stocké en 'unmatched' pour révision admin, jamais perdu.
+//
+// Le MÊME traitement sert la preuve signée envoyée par l'application du marchand
+// (auto-hébergé) : voir `recordPaymentSms`.
+router.post("/api/v1/webhook/sms", async (req, res) => {
+  if (str(req.query.token) !== SMS_WEBHOOK_TOKEN) {
+    return res.status(401).json({ error: "Token webhook invalide." });
+  }
+  const body = req.body ?? {};
+  // Formes acceptées (selon le payload TextBee) : { sms }, { message }, { text }, { body }.
+  const raw = [body.sms ?? body.message ?? body.text ?? body.body ?? body.content]
+    .flat()
+    .find((s) => typeof s === "string" && s.trim().length > 0);
+  if (!raw) return res.status(400).json({ error: "Aucun SMS reçu." });
+
+  const received_at = Number(body.received_at ?? body.timestamp ?? body.receivedAt) || Date.now();
+  const result = await recordPaymentSms({ raw, receivedAt: received_at, source: "passerelle" });
+  res.json(result);
+});
+
+// ── Preuve de paiement SIGNÉE par l'application (auto-hébergé) ─────────────────────
+// Le SMS de paiement peut être apporté par l'APPLICATION DU MARCHAND elle-même
+// (elle lit le SMS reçu et le transmet) : plus de dépendance à une passerelle
+// payante, et le serveur n'a plus qu'une seule porte.
+//
+// La preuve est SIGNÉE avec la clé de l'appareil (ECDSA P-256, la même que le canal
+// P2P) : le serveur sait que c'est CET appareil, et pas un tiers qui usurpe un
+// numéro de téléphone. La signature ne remplace PAS la validation humaine (un
+// marchand peut signer un faux SMS) — elle remplace le secret partagé de la
+// passerelle.
+router.post("/api/v1/payments/proof", async (req, res) => {
+  const body = req.body ?? {};
+  const device_id = str(body.device_id);
+  const sms = str(body.sms);
+  if (!device_id || !sms) return res.status(400).json({ error: "device_id et sms requis." });
+
+  const shop = await byDeviceId(device_id);
+  if (!shop) return res.status(404).json({ error: "Appareil inconnu." });
+  const publicKey = shop.public_key;
+  if (!publicKey) {
+    return res.status(409).json({
+      error: "Cet écran n'a pas encore de clé : rechargez l'application, puis réessayez.",
+    });
+  }
+
+  const signed = {
+    device_id,
+    sms,
+    from: str(body.from),
+    received_at: Number(body.received_at) || Date.now(),
+  };
+  const attendu = signableProofBody(signed);
+  const valide = await verifyProofSignature(attendu, str(body.sig), publicKey);
+  if (!valide) {
+    // Journalé : une signature refusée est une tentative, pas un aléa.
+    console.warn(
+      `[${new Date().toISOString()}] PREUVE DE PAIEMENT REFUSÉE : signature invalide (${device_id})`,
+    );
+    return res.status(401).json({ error: "Signature invalide." });
+  }
+
+  const result = await recordPaymentSms({
+    raw: sms,
+    receivedAt: signed.received_at,
+    source: "application",
+  });
+  res.json(result);
 });
 
 // ── Protocole : bénédiction d'un appareil invité ───────────────────────────

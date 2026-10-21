@@ -342,3 +342,9 @@ CREATE TABLE IF NOT EXISTS app_settings (
   value       TEXT NOT NULL,
   updated_at  BIGINT NOT NULL
 );
+
+-- La CLÉ PUBLIQUE de l'appareil (ECDSA P-256, la même que le canal P2P). Elle permet
+-- au serveur de VÉRIFIER ce que l'appareil lui envoie — notamment une preuve de
+-- paiement signée : l'application du marchand peut transmettre son SMS de paiement
+-- sans qu'on doive faire confiance à une passerelle tierce.
+ALTER TABLE shops ADD COLUMN IF NOT EXISTS public_key TEXT;

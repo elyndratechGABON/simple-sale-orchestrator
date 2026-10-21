@@ -175,17 +175,38 @@ test("la route de drain exige une authentification", () => {
 
 test("le webhook SMS ne renouvelle plus aucun abonnement", () => {
   const entry = readFileSync(new URL("../routes/entry.mjs", import.meta.url, import.meta.url), "utf8");
-  // Le bloc webhook ne doit plus appeler `applyTierRenewal` : c'est LA garantie que le
-  // renouvellement passe par un humain. Un simple grep sur le bloc suffit, et il échoue
-  // bruyamment si quelqu'un réintroduit l'appel automatique plus tard.
-  const start = entry.indexOf('router.post("/api/v1/webhook/sms"');
-  assert.ok(start > 0, "route webhook introuvable");
-  const block = entry.slice(start);
+  // Le corps COMMUN (webhook ET preuve signée par l'application) ne doit plus appeler
+  // `applyTierRenewal` : c'est LA garantie que le renouvellement passe par un humain.
+  // Un simple grep suffit, et il échoue bruyamment si quelqu'un réintroduit l'appel
+  // automatique plus tard.
+  const start = entry.indexOf("async function recordPaymentSms");
+  assert.ok(start > 0, "fonction d'enregistrement du SMS introuvable");
+  const block = entry.slice(start, entry.indexOf('router.post("/api/v1/webhook/sms"', start));
   assert.ok(
     !block.includes("applyTierRenewal("),
-    "le webhook ne doit plus appeler applyTierRenewal — le renouvellement doit être humain",
+    "le SMS ne doit plus appeler applyTierRenewal — le renouvellement doit être humain",
   );
   assert.match(block, /status = 'pending'/, "le SMS doit arriver en `pending`, à valider");
+  // Le webhook ET la preuve signée passent par le MÊME traitement : pas de chemin
+  // parallèle, donc pas de porte oubliée.
+  assert.match(entry, /recordPaymentSms\(\{ raw, receivedAt: received_at, source: "passerelle" \}\)/);
+  assert.match(entry, /recordPaymentSms\(\{\s*raw: sms,\s*receivedAt: signed\.received_at,\s*source: "application",/);
+});
+
+test("la preuve de paiement signée est VÉRIFIÉE, et rien n'est renouvelé automatiquement", () => {
+  const entry = readFileSync(new URL("../routes/entry.mjs", import.meta.url, import.meta.url), "utf8");
+  const lib = readFileSync(new URL("../lib.mjs", import.meta.url, import.meta.url), "utf8");
+  // La route des preuves existe, elle est protégée par la SIGNATURE de l'appareil…
+  assert.match(entry, /router\.post\("\/api\/v1\/payments\/proof"/);
+  assert.match(entry, /verifyProofSignature\(attendu, str\(body\.sig\), publicKey\)/);
+  assert.match(entry, /Signature invalide/);
+  // … et le corps signé est canonique (clés triées) : l'ordre du JSON ne doit pas
+  // décider de la validité d'une preuve.
+  assert.match(lib, /export function signableProofBody/);
+  assert.match(lib, /\.sort\(\)/);
+  // La clé publique de l'appareil est bien celle que le handshake dépose.
+  assert.match(entry, /public_key\s*=\s*COALESCE\(\$10, public_key\)/);
+  assert.match(entry, /device_public_key/);
 });
 
 test("les mots de passe de compte sont comparés par hachage, pas en clair", () => {
