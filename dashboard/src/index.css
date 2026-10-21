@@ -1234,6 +1234,31 @@ tbody tr:hover {
   box-shadow: var(--shadow);
 }
 
+/* Filtres en ligne (plusieurs onglets côte à côte) : la grille à deux colonnes du
+   sélecteur de portée ne convient pas à une barre de filtres. */
+.segmented.segmented-inline {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 0;
+  flex-wrap: wrap;
+}
+
+/* Champ de recherche courant (hors connexion). */
+.input {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
 /* ---- Paliers d'abonnement ---- */
 
 .tier-chips {

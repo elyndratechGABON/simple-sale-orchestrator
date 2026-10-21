@@ -609,6 +609,28 @@ export function setAccountPassword(accountId: number, password: string): Promise
   });
 }
 
+/**
+ * Changer l'ABONNEMENT d'un commerce : le montant palier (10 000 F = 3 écrans,
+ * 25 000 F = 5, 50 000 F = 9) fixe le nombre de places. `days` prolonge d'autant.
+ */
+export function setAccountPlan(
+  accountId: number,
+  body: { amount_fcfa?: number; days?: number; reason?: string },
+): Promise<{ ok: boolean; account: Account }> {
+  return request(`/api/v1/admin/clients/${accountId}/plan`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/** Réactiver un commerce suspendu (lève le verrou, garde les données). */
+export function activateAccount(accountId: number): Promise<{ ok: boolean; account: Account }> {
+  return request(`/api/v1/admin/clients/${accountId}/activate`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
 export function sendAccountCommand(
   accountId: number,
   body:

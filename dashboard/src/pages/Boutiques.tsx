@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   fetchShopsDetail,
   fetchDeleteRequests,
@@ -6,17 +6,43 @@ import {
   rejectDeleteRequest,
   deleteShop,
   deleteAccount,
+  sendAccountCommand,
+  setAccountPlan,
+  activateAccount,
   type ShopDetail,
   type DeleteRequest,
 } from "../api";
 import { fmtDate, fmtDateTime, fmtFcfa, statusBadge } from "../utils";
-import { InboxIcon } from "../icons";
+import { AlertIcon, BanknoteIcon, InboxIcon, LockIcon, SendIcon, XIcon } from "../icons";
 import { DataTable } from "../components/ui/DataTable";
+import { Modal } from "../components/ui/Modal";
 import { OnlineDot } from "../components/ui/OnlineDot";
 
 type Props = {
   onSelect: (deviceId: string) => void;
 };
+
+/** Les paliers : le montant fixe le nombre de places. */
+const PALIERS = [
+  { montant: 10000, nom: "Essentiel", places: 3 },
+  { montant: 25000, nom: "Confort", places: 5 },
+  { montant: 50000, nom: "Affluence", places: 9 },
+];
+
+type Filtre = "all" | "trial" | "subscribed" | "suspended";
+
+const FILTRES: { cle: Filtre; label: string }[] = [
+  { cle: "all", label: "Tous" },
+  { cle: "trial", label: "En essai" },
+  { cle: "subscribed", label: "Abonnés" },
+  { cle: "suspended", label: "Suspendus" },
+];
+
+/** Un commerce « en essai » n'a jamais payé ; « abonné » a au moins un paiement. */
+function categorie(s: ShopDetail): "trial" | "subscribed" | "suspended" {
+  if (s.status === "suspended") return "suspended";
+  return (s.payments ?? 0) > 0 ? "subscribed" : "trial";
+}
 
 export function Boutiques({ onSelect }: Props) {
   const [shops, setShops] = useState<ShopDetail[]>([]);
@@ -26,6 +52,13 @@ export function Boutiques({ onSelect }: Props) {
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
+  // Filtres et recherche : c'est le quotidien du support (« le client de Port-Gentil »).
+  const [filtre, setFiltre] = useState<Filtre>("all");
+  const [recherche, setRecherche] = useState("");
+  // Les modales d'action sur un commerce.
+  const [planPour, setPlanPour] = useState<ShopDetail | null>(null);
+  const [messagePour, setMessagePour] = useState<ShopDetail | null>(null);
+  const [messageTexte, setMessageTexte] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -48,6 +81,35 @@ export function Boutiques({ onSelect }: Props) {
     const t = setInterval(load, 15_000);
     return () => { alive = false; clearInterval(t); };
   }, []);
+
+  const rafraichir = async () => {
+    const [shopRes, reqRes] = await Promise.all([
+      fetchShopsDetail(),
+      fetchDeleteRequests({ status: "pending" }),
+    ]);
+    setShops(shopRes.shops);
+    setDeletions(reqRes.requests);
+  };
+
+  // La liste affichée : filtres + recherche. Les compteurs restent sur le TOTAL
+  // (pas sur la liste filtrée) : « 12 en essai » doit dire la vérité, même filtré.
+  const visibles = useMemo(() => {
+    const q = recherche.trim().toLowerCase();
+    return shops.filter((s) => {
+      if (filtre !== "all" && categorie(s) !== filtre) return false;
+      if (!q) return true;
+      return [s.store_name, s.owner_name, s.account_name, s.phone, s.location]
+        .filter(Boolean)
+        .some((v) => String(v).toLowerCase().includes(q));
+    });
+  }, [shops, filtre, recherche]);
+
+  const compteurs = useMemo(() => {
+    const c: Record<Filtre, number> = { all: shops.length, trial: 0, subscribed: 0, suspended: 0 };
+    for (const s of shops) c[categorie(s)]++;
+    return c;
+  }, [shops]);
+
 
   const handleApprove = async (req: DeleteRequest) => {
     setBusy(true);
@@ -108,6 +170,77 @@ export function Boutiques({ onSelect }: Props) {
       setError(err instanceof Error ? err.message : "Erreur lors de la suppression.");
     } finally {
       setDeleting(null);
+    }
+  };
+
+  /** Suspendre / réactiver un commerce entier (tous ses écrans d'un coup). */
+  const handleToggleSuspend = async (s: ShopDetail) => {
+    if (s.account_id == null) {
+      setError("Ce commerce n'est rattaché à aucun compte : suspendez l'écran depuis sa fiche.");
+      return;
+    }
+    const nom = s.account_name || s.store_name;
+    if (s.status === "suspended") {
+      if (!window.confirm(`Réactiver « ${nom} » ? La caisse reprendra service.`)) return;
+      setBusy(true);
+      try {
+        await activateAccount(s.account_id);
+        setNotice(`« ${nom} » réactivé.`);
+        await rafraichir();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Erreur.");
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+    if (!window.confirm(
+      `Suspendre « ${nom} » ?\nTous ses écrans se verrouillent (l'accès est coupé, les données restent).`
+    )) return;
+    setBusy(true);
+    try {
+      await sendAccountCommand(s.account_id, { action_type: "suspend" });
+      setNotice(`« ${nom} » suspendu.`);
+      await rafraichir();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erreur.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Changer l'abonnement : le palier fixe le nombre de places. */
+  const handleChangePlan = async (s: ShopDetail, montant: number) => {
+    if (s.account_id == null) return;
+    setBusy(true);
+    try {
+      await setAccountPlan(s.account_id, { amount_fcfa: montant, reason: "Changement depuis la console" });
+      setNotice(`Abonnement de « ${s.account_name || s.store_name} » mis à jour.`);
+      setPlanPour(null);
+      await rafraichir();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erreur.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Envoyer un message au patron (il le reçoit à la prochaine synchronisation). */
+  const handleSendMessage = async () => {
+    if (!messagePour?.account_id || !messageTexte.trim()) return;
+    setBusy(true);
+    try {
+      await sendAccountCommand(messagePour.account_id, {
+        action_type: "broadcast_message",
+        message: messageTexte.trim(),
+      });
+      setNotice(`Message envoyé à « ${messagePour.account_name || messagePour.store_name} ».`);
+      setMessagePour(null);
+      setMessageTexte("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erreur.");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -174,6 +307,31 @@ export function Boutiques({ onSelect }: Props) {
           ))}
         </section>
       )}
+
+      {/* Filtres + recherche : le quotidien du support (« le client de Port-Gentil »). */}
+      <div className="row-actions" style={{ marginBottom: 12, gap: 12, alignItems: "center" }}>
+        <div className="segmented segmented-inline" role="tablist" aria-label="Filtrer les boutiques">
+          {FILTRES.map((f) => (
+            <button
+              key={f.cle}
+              role="tab"
+              aria-selected={filtre === f.cle}
+              className={`segment ${filtre === f.cle ? "active" : ""}`}
+              onClick={() => setFiltre(f.cle)}
+            >
+              {f.label} <span className="muted">{compteurs[f.cle]}</span>
+            </button>
+          ))}
+        </div>
+        <input
+          className="input"
+          placeholder="Rechercher un commerce, un patron, un téléphone…"
+          value={recherche}
+          onChange={(e) => setRecherche(e.target.value)}
+          style={{ flex: 1, minWidth: 220, maxWidth: 420 }}
+          aria-label="Rechercher"
+        />
+      </div>
 
       {!ready ? (
         <div className="table-wrap">
@@ -268,7 +426,7 @@ export function Boutiques({ onSelect }: Props) {
               label: "Derni\u00e8re sync",
               render: (s: ShopDetail) => <span className="mono">{fmtDateTime(s.last_sync_at)}</span>,
             },
-{
+            {
               key: "actions",
               label: "",
               render: (s: ShopDetail) => (
@@ -277,9 +435,56 @@ export function Boutiques({ onSelect }: Props) {
                     Détails
                   </button>
                   {s.account_id != null && (
+                    <>
+                      <button
+                        className="btn btn-sm btn-ghost"
+                        onClick={() => setPlanPour(s)}
+                        disabled={busy}
+                        title="Changer l'abonnement (nombre de places)"
+                      >
+                        <BanknoteIcon size={13} />
+                        Abonnement
+                      </button>
+                      <button
+                        className="btn btn-sm btn-ghost"
+                        onClick={() => {
+                          setMessagePour(s);
+                          setMessageTexte("");
+                        }}
+                        disabled={busy}
+                        title="Envoyer un message au patron"
+                      >
+                        <SendIcon size={13} />
+                        Message
+                      </button>
+                      <button
+                        className="btn btn-sm btn-ghost"
+                        onClick={() => handleToggleSuspend(s)}
+                        disabled={busy}
+                        title={
+                          s.status === "suspended"
+                            ? "Réactiver ce commerce"
+                            : "Suspendre ce commerce (l'accès est coupé, les données restent)"
+                        }
+                      >
+                        {s.status === "suspended" ? (
+                          <>
+                            <AlertIcon size={13} />
+                            Réactiver
+                          </>
+                        ) : (
+                          <>
+                            <LockIcon size={13} />
+                            Suspendre
+                          </>
+                        )}
+                      </button>
+                    </>
+                  )}
+                  {s.account_id != null && (
                     <button
                       className="btn btn-sm btn-ghost text-destructive hover:text-destructive"
-                      onClick={() => handleDeleteAccount(s.account_id, s.account_name || `compte #${s.account_id}`)}
+                      onClick={() => handleDeleteAccount(s.account_id!, s.account_name || `compte #${s.account_id}`)}
                       disabled={deleting === `account-${s.account_id}` || busy}
                       title="Supprimer toute la boutique (compte + tous ses écrans)"
                     >
@@ -290,11 +495,76 @@ export function Boutiques({ onSelect }: Props) {
               ),
             },
           ]}
-          data={shops}
+          data={visibles}
           keyFn={(s) => s.device_id}
-          emptyMessage="Aucune boutique."
+          emptyMessage={
+            shops.length === 0
+              ? "Aucune boutique."
+              : "Aucun commerce ne correspond à ce filtre."
+          }
         />
       )}
+
+      {/* Changer l'abonnement : le palier fixe le nombre de places. */}
+      <Modal
+        open={planPour !== null}
+        onClose={() => setPlanPour(null)}
+        title={`Abonnement — ${planPour?.account_name || planPour?.store_name || ""}`}
+      >
+        <p className="modal-note">
+          Le palier choisi fixe le nombre de places (écrans) et la durée. L&apos;abonnement en
+          cours : {planPour?.plan_name || "aucun"} — {fmtFcfa(planPour?.plan_price_fcfa ?? null)} —
+          {" "}
+          {planPour?.account_device_count ?? 0}/{planPour?.account_max_devices ?? "?"} écrans.
+        </p>
+        <div className="tier-chips">
+          {PALIERS.map((p) => (
+            <button
+              key={p.montant}
+              className="chip-btn"
+              onClick={() => planPour && handleChangePlan(planPour, p.montant)}
+              disabled={busy}
+            >
+              <strong>{p.nom}</strong>
+              <span className="muted">
+                {fmtFcfa(p.montant)} · {p.places} écrans
+              </span>
+            </button>
+          ))}
+        </div>
+      </Modal>
+
+      {/* Message au patron : il le reçoit à sa prochaine synchronisation. */}
+      <Modal
+        open={messagePour !== null}
+        onClose={() => setMessagePour(null)}
+        title={`Message — ${messagePour?.account_name || messagePour?.store_name || ""}`}
+      >
+        <p className="modal-note">
+          Le message est affiché chez le patron à sa prochaine synchronisation. Utile pour une
+          consigne ponctuelle (une information, une demande de vérification).
+        </p>
+        <textarea
+          value={messageTexte}
+          onChange={(e) => setMessageTexte(e.target.value)}
+          placeholder="Votre message…"
+          rows={4}
+        />
+        <div className="row-actions" style={{ marginTop: 12 }}>
+          <button
+            className="btn btn-primary"
+            onClick={() => void handleSendMessage()}
+            disabled={busy || !messageTexte.trim()}
+          >
+            <SendIcon size={13} />
+            Envoyer
+          </button>
+          <button className="btn btn-ghost" onClick={() => setMessagePour(null)}>
+            <XIcon size={13} />
+            Annuler
+          </button>
+        </div>
+      </Modal>
     </>
   );
 }
