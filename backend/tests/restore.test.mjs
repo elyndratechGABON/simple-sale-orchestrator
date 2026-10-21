@@ -102,9 +102,15 @@ test("le drainer chiffre la colonne payload_enc et préserve payload", () => {
     /payload_enc/,
     "la colonne chiffrée doit être écrite",
   );
-  // `ON CONFLICT (id) DO NOTHING` = la déduplication survit au chiffrement, puisque
-  // c'est `id` (non chiffré) qui porte la contrainte.
-  assert.match(src, /ON CONFLICT \(id\) DO NOTHING/, "l'idempotence du drainer doit tenir");
+  // `ON CONFLICT (id)` = la déduplication survit au chiffrement, puisque c'est
+  // `id` (non chiffré) qui porte la contrainte. L'archivage met à jour le compte
+  // propriétaire (la clé stable de l'archive) sans jamais dupliquer l'opération.
+  assert.match(src, /ON CONFLICT \(id\) DO/, "l'idempotence du drainer doit tenir");
+  assert.match(
+    src,
+    /DO UPDATE SET account_id = EXCLUDED\.account_id/,
+    "un ré-archivage doit compléter le compte propriétaire",
+  );
 });
 
 // ── Autorisation de la route ────────────────────────────────────────────────────────

@@ -207,9 +207,9 @@ async function archive(shopId, ops, key) {
   await db.tx(async (client) => {
     for (const op of ops) {
       const r = await client.query(
-        `INSERT INTO sync_ops (id, shop_id, device_id, seq, type, entity_id, payload, payload_enc, created_at, drained_at, sig)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-         ON CONFLICT (id) DO NOTHING`,
+        `INSERT INTO sync_ops (id, shop_id, device_id, seq, type, entity_id, payload, payload_enc, created_at, drained_at, sig, account_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         ON CONFLICT (id) DO UPDATE SET account_id = EXCLUDED.account_id`,
         [
           String(op.id ?? ""),
           shopId,
@@ -224,9 +224,14 @@ async function archive(shopId, ops, key) {
           Number(op.created_at ?? now) || now,
           now,
           // La signature voyage avec l'op : l'archive doit permettre de REJOUER le
-          // journal (ou de l'auditer) sans repasser par un appareil. La colonne `sig`
-          // est nullable pour que l'archive accepte aussi les ops d'avant signature.
+          // journal (ou de l'auditer) sans repasser par un appareil. La colonne `sig` est
+          // nullable pour que l'archive accepte aussi les ops d'avant signature.
           typeof op.sig === "string" ? op.sig : null,
+          // Le COMPTE propriétaire de l'op. C'est la clé STABLE de l'archive : le groupe
+          // P2P (`shop_id`) peut changer — un téléphone réinstallé ou une fiche purgée
+          // recalculent le leur — et une archive rangée par groupe devient alors
+          // introuvable. Le compte, lui, ne bouge pas.
+          accountId,
         ],
       );
       inserted += r.rowCount ?? 0;

@@ -305,7 +305,8 @@ test("le relais persiste la signature des opérations", () => {
 
 test("le drainer archive la signature avec l'opération", () => {
   const drainer = readFileSync(new URL("../drainer.mjs", import.meta.url, import.meta.url), "utf8");
-  assert.match(drainer, /drained_at, sig\)/, "l'archive doit conserver la signature");
+  assert.match(drainer, /drained_at, sig/, "l'archive doit conserver la signature");
+  assert.match(drainer, /typeof op\.sig === "string" \? op\.sig : null/);
 });
 
 test("la limitation de débit bloque l'énumération de mots de passe", async () => {

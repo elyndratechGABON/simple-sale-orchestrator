@@ -128,8 +128,8 @@ router.post("/api/v1/restore", async (req, res) => {
 
   // Le nombre d'ops archivées est ce qui distingue « pas encore drainé » de « vide ».
   const counted = await db.get(
-    `SELECT COUNT(*) AS n FROM sync_ops WHERE shop_id = $1`,
-    claimedShopId,
+    `SELECT COUNT(*) AS n FROM sync_ops WHERE account_id = $1`,
+    job.account_id,
   );
   const total = Number(counted?.n ?? 0);
   const ready = total > 0;
@@ -201,10 +201,10 @@ router.get("/api/v1/restore/:job_id", async (req, res) => {
   const rows = await db.all(
     `SELECT id, device_id, seq, type, entity_id, payload, payload_enc, created_at, sig
        FROM sync_ops
-      WHERE shop_id = $1
+      WHERE account_id = $1
       ORDER BY created_at, id
       LIMIT $2 OFFSET $3`,
-    job.shop_id,
+    job.account_id,
     PAGE_SIZE,
     cursor,
   );
@@ -247,7 +247,8 @@ router.get("/api/v1/restore/:job_id", async (req, res) => {
 
   const next = cursor + rows.length;
   const total = Number(
-    (await db.get(`SELECT COUNT(*) AS n FROM sync_ops WHERE shop_id = $1`, job.shop_id))?.n ?? 0,
+    (await db.get(`SELECT COUNT(*) AS n FROM sync_ops WHERE account_id = $1`, job.account_id))?.n ??
+      0,
   );
 
   await db.run(`UPDATE restore_jobs SET status = 'ready' WHERE id = $1`, jobId);

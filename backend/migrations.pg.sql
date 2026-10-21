@@ -348,3 +348,9 @@ CREATE TABLE IF NOT EXISTS app_settings (
 -- paiement signée : l'application du marchand peut transmettre son SMS de paiement
 -- sans qu'on doive faire confiance à une passerelle tierce.
 ALTER TABLE shops ADD COLUMN IF NOT EXISTS public_key TEXT;
+
+-- L'ARCHIVE se range par COMPTE, pas par groupe P2P : le groupe d'un écran peut
+-- changer (réinstallation, fiche purgée ? le groupe est recalculé), et une archive
+-- rangée par groupe devient alors introuvable au moment précis où l'on en a besoin.
+ALTER TABLE sync_ops ADD COLUMN IF NOT EXISTS account_id BIGINT;
+CREATE INDEX IF NOT EXISTS idx_sync_ops_account ON sync_ops (account_id, created_at, id);
