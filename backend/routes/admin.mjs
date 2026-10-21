@@ -668,18 +668,45 @@ router.post("/api/v1/admin/sms-payments/:id/process", requireAdmin, async (req, 
 // laisser un fantôme qui continue de compter. Un compte avec plusieurs écrans, lui,
 // survit : les autres caisses le servent encore.
 // `q` = exécuteur : la facette db (hors transaction) ou un client pg (dans une tx).
+/**
+ * Supprime une fiche écran et tout ce qui en dépend (ventes, ordres, historique).
+ * Partagé par la suppression d'un écran et par celle d'un compte.
+ */
+async function deleteShopRows(shop, run) {
+  await run("DELETE FROM payments WHERE shop_id = $1", [shop.id]);
+  await run("DELETE FROM admin_commands WHERE device_id = $1", [shop.device_id]);
+  await run("DELETE FROM sync_payloads WHERE device_id = $1", [shop.device_id]);
+  await run("DELETE FROM daily_stats WHERE device_id = $1", [shop.device_id]);
+  await run("DELETE FROM activity_events WHERE shop_id = $1", [shop.id]);
+  await run("DELETE FROM payment_events WHERE shop_id = $1", [shop.id]);
+  await run("DELETE FROM device_blessings WHERE device_id = $1", [shop.device_id]);
+  await run("DELETE FROM device_credentials WHERE device_id = $1", [shop.device_id]);
+  await run("DELETE FROM shops WHERE id = $1", [shop.id]);
+}
+
 async function removeAccountRows(accountId, q) {
   const run = (sql, ...params) => (q ? q.query(sql, params) : db.run(sql, ...params));
-  await run("DELETE FROM payments WHERE account_id = $1", accountId);
-  await run("DELETE FROM admin_commands WHERE account_id = $1", accountId);
-  await run("DELETE FROM subscription_requests WHERE account_id = $1", accountId);
-  await run("DELETE FROM activity_events WHERE account_id = $1", accountId);
-  await run("DELETE FROM payment_events WHERE account_id = $1", accountId);
-  await run("DELETE FROM device_blessings WHERE account_id = $1", accountId);
-  await run("DELETE FROM device_credentials WHERE account_id = $1", accountId);
+  // Les ÉCRANS du compte partent avec lui. Sans cela, un écran survivait à son
+  // compte : il n'appartenait à plus rien (son compte était effacé) et la console
+  // l'affichait quand même comme une boutique — un fantôme, avec un compteur de
+  // places inventé. La promesse faite à l'administrateur (« tout est effacé :
+  // ventes, stock, historique ») vaut aussi pour les écrans.
+  const shops = q
+    ? (await q.query("SELECT id, device_id FROM shops WHERE account_id = $1", [accountId])).rows
+    : await db.all("SELECT id, device_id FROM shops WHERE account_id = $1", [accountId]);
+  for (const shop of shops) {
+    await deleteShopRows(shop, run);
+  }
+  await run("DELETE FROM payments WHERE account_id = $1", [accountId]);
+  await run("DELETE FROM admin_commands WHERE account_id = $1", [accountId]);
+  await run("DELETE FROM subscription_requests WHERE account_id = $1", [accountId]);
+  await run("DELETE FROM activity_events WHERE account_id = $1", [accountId]);
+  await run("DELETE FROM payment_events WHERE account_id = $1", [accountId]);
+  await run("DELETE FROM device_blessings WHERE account_id = $1", [accountId]);
+  await run("DELETE FROM device_credentials WHERE account_id = $1", [accountId]);
   // Les lignes SMS gardent leur valeur de preuve mais perdent la référence au compte.
-  await run("UPDATE sms_payments SET matched_account_id = NULL WHERE matched_account_id = $1", accountId);
-  await run("DELETE FROM accounts WHERE id = $1", accountId);
+  await run("UPDATE sms_payments SET matched_account_id = NULL WHERE matched_account_id = $1", [accountId]);
+  await run("DELETE FROM accounts WHERE id = $1", [accountId]);
 }
 
 async function deleteAccountCompletely(accountId) {
@@ -691,15 +718,8 @@ export async function deleteShop(deviceId) {
   if (!shop) return null;
   const accountId = shop.account_id ?? null;
   await db.tx(async (client) => {
-    await client.query("DELETE FROM payments WHERE shop_id = $1", [shop.id]);
-    await client.query("DELETE FROM admin_commands WHERE device_id = $1", [deviceId]);
-    await client.query("DELETE FROM sync_payloads WHERE device_id = $1", [deviceId]);
-    await client.query("DELETE FROM daily_stats WHERE device_id = $1", [deviceId]);
-    await client.query("DELETE FROM activity_events WHERE shop_id = $1", [shop.id]);
-    await client.query("DELETE FROM payment_events WHERE shop_id = $1", [shop.id]);
-    await client.query("DELETE FROM device_blessings WHERE device_id = $1", [deviceId]);
-    await client.query("DELETE FROM device_credentials WHERE device_id = $1", [deviceId]);
-    await client.query("DELETE FROM shops WHERE id = $1", [shop.id]);
+    const run = (sql, ...params) => client.query(sql, params);
+    await deleteShopRows(shop, run);
     if (accountId) {
       const r = await client.query("SELECT COUNT(*) AS c FROM shops WHERE account_id = $1", [accountId]);
       if (Number(r.rows[0].c) === 0) await removeAccountRows(accountId, client);

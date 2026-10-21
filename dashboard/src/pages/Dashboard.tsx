@@ -137,7 +137,7 @@ export function Dashboard() {
                   <th>Écrans</th>
                   <th>Statut</th>
                   <th>État</th>
-                  <th>Dernière sync</th>
+                  <th>Dernière synchronisation</th>
                   <th>CA ce mois</th>
                   <th>Elyndra/mois</th>
                 </tr>
