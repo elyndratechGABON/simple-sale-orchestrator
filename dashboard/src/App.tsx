@@ -45,7 +45,7 @@ function Login({ onLogin }: { onLogin: () => void }) {
           <h1>ELYNDRA CONTROL CENTER</h1>
         </div>
         <p className="lead">Console marchand — abonnements, comptes et écrans de caisse.</p>
-        <label htmlFor="login-project">Projet (vide = administrateur)</label>
+        <label htmlFor="login-project">Projet (vide = tout administrer)</label>
         <input
           id="login-project"
           list="known-projects"

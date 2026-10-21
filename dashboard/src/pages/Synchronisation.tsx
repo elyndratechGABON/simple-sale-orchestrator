@@ -161,7 +161,7 @@ export function Synchronisation() {
                 <th>Syncs</th>
                 <th>En attente</th>
                 <th>Erreurs</th>
-                <th>Dernière sync</th>
+                <th>Dernière synchronisation</th>
               </tr>
             </thead>
             <tbody>

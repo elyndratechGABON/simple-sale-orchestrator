@@ -86,15 +86,15 @@ export function Dashboard() {
           <div className="v accent">{fmtFcfa(elyndra?.mois_encaisse)}</div>
         </div>
         <div className="stat">
-          <div className="k">MRR (abonnements)</div>
+          <div className="k">Revenu mensuel récurrent</div>
           <div className="v">{fmtFcfa(elyndra?.mrr_fcfa)}</div>
         </div>
         <div className="stat">
-          <div className="k">ARR</div>
+          <div className="k">Revenu annuel récurrent</div>
           <div className="v">{fmtFcfa(elyndra?.arr_fcfa)}</div>
         </div>
         <div className="stat">
-          <div className="k">CA boutiques ce mois</div>
+          <div className="k">CA des boutiques</div>
           <div className="v ok">{fmtFcfa(elyndra?.ca_boutiques_mois)}</div>
         </div>
       </div>
@@ -217,7 +217,7 @@ export function Dashboard() {
           <div className="panel-head">
             <div className="panel-title">
               <ChartIcon size={15} />
-              <span>Commerces par lieu</span>
+              <span>Boutiques par lieu</span>
             </div>
           </div>
           <div className="bars">
@@ -231,12 +231,12 @@ export function Dashboard() {
                   />
                 </div>
                 <span className="bar-value mono">
-                  {l.count} commerce{l.count > 1 ? "s" : ""}
+                  {l.count} boutique{l.count > 1 ? "s" : ""}
                 </span>
               </div>
             ))}
             {(sf?.par_lieu ?? []).length === 0 && (
-              <div className="muted">Aucun commerce enregistré.</div>
+              <div className="muted">Aucune boutique enregistrée.</div>
             )}
           </div>
         </section>
@@ -245,7 +245,7 @@ export function Dashboard() {
           <div className="panel-head">
             <div className="panel-title">
               <ChartIcon size={15} />
-              <span>Revenu Elyndra par client — 30 jours</span>
+              <span>Revenu Elyndra par boutique — 30 jours</span>
             </div>
           </div>
           <div className="bars">

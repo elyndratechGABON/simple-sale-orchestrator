@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import {
   fetchShopsDetail,
   fetchDeleteRequests,
@@ -32,8 +32,8 @@ type Props = {
   onSelect: (deviceId: string) => void;
 };
 
-/** Les paliers : le montant fixe le nombre de places. */
-const PALIERS = [
+/** Les abonnements : le montant fixe le nombre de places. */
+const ABONNEMENTS = [
   { montant: 10000, nom: "Essentiel", places: 3 },
   { montant: 25000, nom: "Confort", places: 5 },
   { montant: 50000, nom: "Affluence", places: 9 },
@@ -48,7 +48,7 @@ const FILTRES: { cle: Filtre; label: string }[] = [
   { cle: "suspended", label: "Suspendus" },
 ];
 
-/** Un commerce « en essai » n'a jamais payé ; « abonné » a au moins un paiement. */
+/** Une boutique « en essai » n'a jamais payé ; « abonné » a au moins un paiement. */
 function categorie(s: ShopDetail): "trial" | "subscribed" | "suspended" {
   if (s.status === "suspended") return "suspended";
   return (s.payments ?? 0) > 0 ? "subscribed" : "trial";
@@ -65,7 +65,7 @@ export function Boutiques({ onSelect }: Props) {
   // Filtres et recherche : c'est le quotidien du support (« le client de Port-Gentil »).
   const [filtre, setFiltre] = useState<Filtre>("all");
   const [recherche, setRecherche] = useState("");
-  // Les modales d'action sur un commerce.
+  // Les modales d'action sur une boutique.
   const [planPour, setPlanPour] = useState<ShopDetail | null>(null);
   const [messagePour, setMessagePour] = useState<ShopDetail | null>(null);
   const [messageTexte, setMessageTexte] = useState("");
@@ -185,10 +185,10 @@ export function Boutiques({ onSelect }: Props) {
     }
   };
 
-  /** Suspendre / réactiver un commerce entier (tous ses écrans d'un coup). */
+  /** Suspendre / réactiver une boutique entière (tous ses écrans d'un coup). */
   const handleToggleSuspend = async (s: ShopDetail) => {
     if (s.account_id == null) {
-      setError("Ce commerce n'est rattaché à aucun compte : suspendez l'écran depuis sa fiche.");
+      setError("Cette boutique n'est rattachée à aucun compte : suspendez l'écran depuis sa fiche.");
       return;
     }
     const nom = s.account_name || s.store_name;
@@ -221,7 +221,7 @@ export function Boutiques({ onSelect }: Props) {
     }
   };
 
-  /** Rattacher un écran à ce commerce (recours quand l'écran n'a pas pu rejoindre). */
+  /** Rattacher un écran à cette boutique (recours quand l'écran n'a pas pu rejoindre). */
   const handleAttach = async () => {
     if (!accesPour?.account_id || !deviceIdRattache.trim()) return;
     setBusy(true);
@@ -237,7 +237,7 @@ export function Boutiques({ onSelect }: Props) {
     }
   };
 
-  /** Révoquer l'accès d'un écran : il quitte le commerce (la fiche est supprimée). */
+  /** Révoquer l'accès d'un écran : il quitte la boutique (la fiche est supprimée). */
   const handleRevokeDevice = async (deviceId: string, label: string) => {
     if (
       !window.confirm(
@@ -257,7 +257,7 @@ export function Boutiques({ onSelect }: Props) {
     }
   };
 
-  /** Changer l'abonnement : le palier fixe le nombre de places. */
+  /** Changer l'abonnement : le montant fixe le nombre de places. */
   const handleChangePlan = async (s: ShopDetail, montant: number) => {
     if (s.account_id == null) return;
     setBusy(true);
@@ -373,7 +373,7 @@ export function Boutiques({ onSelect }: Props) {
         </div>
         <input
           className="input"
-          placeholder="Rechercher un commerce, un patron, un téléphone…"
+          placeholder="Rechercher une boutique, un patron, un téléphone…"
           value={recherche}
           onChange={(e) => setRecherche(e.target.value)}
           style={{ flex: 1, minWidth: 220, maxWidth: 420 }}
@@ -466,7 +466,7 @@ export function Boutiques({ onSelect }: Props) {
             { key: "status", label: "Statut", render: (s: ShopDetail) => statusBadge(s.status) },
             {
               key: "expiry_date",
-              label: "Échéance",
+              label: "Fin d&apos;abonnement",
               render: (s: ShopDetail) => <span className="mono">{fmtDate(s.expiry_date)}</span>,
             },
             {
@@ -491,7 +491,7 @@ export function Boutiques({ onSelect }: Props) {
                           setDeviceIdRattache("");
                         }}
                         disabled={busy}
-                        title="Gérer les écrans de ce commerce"
+                        title="Gérer les écrans de cette boutique"
                       >
                         <SmartphoneIcon size={13} />
                         Accès
@@ -523,8 +523,8 @@ export function Boutiques({ onSelect }: Props) {
                         disabled={busy}
                         title={
                           s.status === "suspended"
-                            ? "Réactiver ce commerce"
-                            : "Suspendre ce commerce (l'accès est coupé, les données restent)"
+                            ? "Réactiver cette boutique"
+                            : "Suspendre cette boutique (l'accès est coupé, les données restent)"
                         }
                       >
                         {s.status === "suspended" ? (
@@ -560,12 +560,12 @@ export function Boutiques({ onSelect }: Props) {
           emptyMessage={
             shops.length === 0
               ? "Aucune boutique."
-              : "Aucun commerce ne correspond à ce filtre."
+              : "Aucune boutique ne correspond à ce filtre."
           }
         />
       )}
 
-      {/* Gérer les accès : les écrans du commerce, et le rattachement d'un écran
+      {/* Gérer les accès : les écrans de la boutique, et le rattachement d'un écran
           qui n'a pas pu rejoindre de lui-même. */}
       <Modal
         open={accesPour !== null}
@@ -630,20 +630,20 @@ export function Boutiques({ onSelect }: Props) {
         </div>
       </Modal>
 
-      {/* Changer l'abonnement : le palier fixe le nombre de places. */}
+      {/* Changer l'abonnement : le montant fixe le nombre de places. */}
       <Modal
         open={planPour !== null}
         onClose={() => setPlanPour(null)}
         title={`Abonnement — ${planPour?.account_name || planPour?.store_name || ""}`}
       >
         <p className="modal-note">
-          Le palier choisi fixe le nombre de places (écrans) et la durée. L&apos;abonnement en
+          L&apos;abonnement choisi fixe le nombre de places (écrans) et la durée. L&apos;abonnement en
           cours : {planPour?.plan_name || "aucun"} — {fmtFcfa(planPour?.plan_price_fcfa ?? null)} —
           {" "}
           {planPour?.account_device_count ?? 0}/{planPour?.account_max_devices ?? "?"} écrans.
         </p>
         <div className="tier-chips">
-          {PALIERS.map((p) => (
+          {ABONNEMENTS.map((p) => (
             <button
               key={p.montant}
               className="chip-btn"

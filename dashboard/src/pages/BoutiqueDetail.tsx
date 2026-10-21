@@ -50,10 +50,10 @@ export function BoutiqueDetail({ deviceId, onBack }: Props) {
 
         <div className="acc-body">
           <div style={{ fontSize: 13, color: "var(--muted)" }}>
-            <div>Device : <span className="mono">{s.device_id}</span></div>
+            <div>Écran : <span className="mono">{s.device_id}</span></div>
             <div>Enregistré le {fmtDate(s.registration_date)}</div>
-            <div>Échéance : {fmtDate(s.expiry_date)}</div>
-            {s.last_sync_at && <div>Dernière sync : {fmtDateTime(s.last_sync_at)}</div>}
+            <div>Fin d'abonnement : {fmtDate(s.expiry_date)}</div>
+            {s.last_sync_at && <div>Dernière synchronisation : {fmtDateTime(s.last_sync_at)}</div>}
           </div>
         </div>
       </article>

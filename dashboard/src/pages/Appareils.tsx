@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { fetchDevices, type Device, type DevicesSummary } from "../api";
 import { fmtDateTime, fmtDate } from "../utils";
 import { InboxIcon } from "../icons";
@@ -49,7 +49,7 @@ export function Appareils() {
           <div className="v">{summary?.offline ?? 0}</div>
         </div>
         <div className="stat">
-          <div className="k">En attente de sync</div>
+          <div className="k">En attente d'envoi</div>
           <div className="v warn">{summary?.sync_pending ?? 0}</div>
         </div>
         {Object.entries(versions).map(([v, n]) => (
@@ -88,7 +88,7 @@ export function Appareils() {
             },
             {
               key: "device_id",
-              label: "Appareil",
+              label: "Écran",
               className: "cell-device",
               render: (d: Device) => <span className="mono">{d.device_id}</span>,
             },
@@ -114,12 +114,12 @@ export function Appareils() {
             },
             {
               key: "expiry_date",
-              label: "Expiration",
+              label: "Fin d'abonnement",
               render: (d: Device) => <span className="mono">{fmtDate(d.expiry_date)}</span>,
             },
             {
               key: "last_sync_at",
-              label: "Dernière sync",
+              label: "Dernière synchronisation",
               render: (d: Device) => <span className="mono">{fmtDateTime(d.last_sync_at)}</span>,
             },
           ]}

@@ -101,11 +101,11 @@ export function Abonnements() {
                     {r.account_phone ? ` · ${r.account_phone}` : ""}
                   </div>
                 </div>
-                <div className="acc-tier" title="Montant encaissé et palier demandé">
+                <div className="acc-tier" title="Montant encaissé et abonnement demandé">
                   <BanknoteIcon size={14} />
                   <span className="mono">{fmtFcfa(r.plan_price)}</span>
                   {r.plan_devices > 0 && (
-                    <span className="badge delivered" title="Palier demandé">{r.plan_devices} appareils</span>
+                    <span className="badge delivered" title="Abonnement demandé">{r.plan_devices} appareils</span>
                   )}
                   {r.plan_name && <span className="muted">{r.plan_name}</span>}
                 </div>

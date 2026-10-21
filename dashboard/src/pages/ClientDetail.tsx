@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { fetchClient, sendAccountCommand, setAccountPassword, type ClientDetail } from "../api";
 import { fmtFcfa, fmtDate, fmtDateTime, statusBadge, ONLINE_WINDOW_MS, daysLeftOf } from "../utils";
 import { BanknoteIcon, LockIcon, StoreIcon, ChevronRightIcon } from "../icons";
@@ -66,7 +66,7 @@ export function ClientDetail({ id, onBack }: Props) {
 
         <div className="acc-body">
           <div style={{ fontSize: 13, color: "var(--muted)" }}>
-            <div>Palier : <strong>{fmtFcfa(subscription.plan_price)}/mois</strong> · {subscription.max_devices} appareils</div>
+            <div>Abonnement : <strong>{fmtFcfa(subscription.plan_price)}/mois</strong> · {subscription.max_devices} appareils</div>
             <div>Expire dans : <strong>{daysLeftOf(subscription.expiry_date, now)} j</strong> (le {fmtDate(subscription.expiry_date)})</div>
             <div>Créé le {fmtDate(client.created_at)}</div>
           </div>
