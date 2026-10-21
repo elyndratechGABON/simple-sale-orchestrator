@@ -11,7 +11,10 @@
 import { db, OPS_RELAY_URL, OPS_TOKEN, BACKUP_KEY } from "./config.mjs";
 import { archiveKeyFor, encryptArchive } from "./archive-crypto.mjs";
 
-const REQ_TIMEOUT_MS = 10_000;
+// Le relais est une fonction serverless : un démarrage à froid peut prendre
+// plusieurs secondes. Dix secondes de délai, c'était la moitié du budget de la
+// fonction qui appelle le relais.
+const REQ_TIMEOUT_MS = 25_000;
 const OPS_HEADERS = OPS_TOKEN ? { "x-ops-token": OPS_TOKEN } : {};
 
 export async function drainRelayFromOps() {
@@ -205,12 +208,21 @@ async function archive(shopId, ops, key, accountId) {
   const now = Date.now();
   let inserted = 0;
   await db.tx(async (client) => {
-    for (const op of ops) {
-      const r = await client.query(
-        `INSERT INTO sync_ops (id, shop_id, device_id, seq, type, entity_id, payload, payload_enc, created_at, drained_at, sig, account_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-         ON CONFLICT (id) DO UPDATE SET account_id = EXCLUDED.account_id`,
-        [
+    // Un INSERT par PAQUET, pas par opération : 54 requêtes round-trip vers Neon
+    // faisaient dépasser la limite de temps d'une fonction serverless. Un lot de 40
+    // opérations par requête : le drain finit largement dedans.
+    const COLS = 12;
+    const ROWS_PER_INSERT = 40;
+    for (let start = 0; start < ops.length; start += ROWS_PER_INSERT) {
+      const lot = ops.slice(start, start + ROWS_PER_INSERT);
+      const values = [];
+      const params = [];
+      for (const op of lot) {
+        const base = params.length;
+        values.push(
+          `(${Array.from({ length: COLS }, (_, i) => `$${base + i + 1}`).join(", ")})`,
+        );
+        params.push(
           String(op.id ?? ""),
           shopId,
           String(op.device_id ?? ""),
@@ -232,7 +244,13 @@ async function archive(shopId, ops, key, accountId) {
           // recalculent le leur — et une archive rangée par groupe devient alors
           // introuvable. Le compte, lui, ne bouge pas.
           accountId,
-        ],
+        );
+      }
+      const r = await client.query(
+        `INSERT INTO sync_ops (id, shop_id, device_id, seq, type, entity_id, payload, payload_enc, created_at, drained_at, sig, account_id)
+         VALUES ${values.join(", ")}
+         ON CONFLICT (id) DO UPDATE SET account_id = EXCLUDED.account_id`,
+        params,
       );
       inserted += r.rowCount ?? 0;
     }
