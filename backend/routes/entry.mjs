@@ -41,6 +41,9 @@ import {
   deviceBlessing,
   deviceBlessingByDevice,
   deviceBlessingsForAccount,
+  canReleaseSeat,
+  releaseShopSeat,
+  accountAnchorDevice,
 } from "../lib.mjs";
 import { broadcastStatus, broadcastRequest } from "./auth.mjs";
 import { parseSms } from "../sms-parser.mjs";
@@ -712,6 +715,70 @@ router.post("/api/v1/account/bless", async (req, res) => {
   await deviceBlessing(targetDeviceId, account.id, ownerShop.device_id);
   console.log(`[${new Date().toISOString()}] BÉNISSION : appareil ${targetDeviceId} → compte "${account.name}" (#${account.id}) par ${ownerShop.device_id}`);
   res.json({ status: "blessed", account_id: account.id, account_name: account.name });
+});
+
+// ── Protocole : libération de place ─────────────────────────────────────────
+// Un écran qui quitte le commerce (démission, remplacement) rend sa place. Sans
+// cette route, le quota compte les écrans À VIE : un commerce qui a eu un employé
+// ne peut plus en recrouver un autre, même après son départ.
+//
+// Deux preuves acceptées :
+//  - le DÉTENTEUR DU COMPTE (téléphone + mot de passe) — c'est le patron qui libère
+//    la place d'un employé, y compris hors ligne (l'op de départ part par le relais,
+//    la libération suit au prochain échange) ;
+//  - l'ÉCRAN LUI-MÊME (device_id + nom de boutique, la preuve déjà en usage pour la
+//    suppression) — c'est la démission depuis l'écran qui part.
+//
+// La place FONDATRICE (le plus ancien écran du compte) ne se rend pas sur une
+// simple auto-déclaration : seul le détenteur du compte peut en décider.
+router.post("/api/v1/entry/release", async (req, res) => {
+  const device_id = str(req.body?.device_id);
+  const store_name = str(req.body?.store_name);
+  if (!device_id) return res.status(400).json({ error: "device_id requis." });
+
+  const target = await byDeviceId(device_id);
+  // Écran déjà inconnu, déjà libéré : la place est libre de toute façon.
+  if (!target || target.released_at) return res.json({ ok: true, released: false });
+
+  const account = target.account_id
+    ? await resolveAccount(await accountById(target.account_id))
+    : null;
+
+  // Preuve 1 — le compte : téléphone + mot de passe du détenteur.
+  const accPhone = normPhone(str(req.body?.account_phone));
+  const accPassword = str(req.body?.account_password);
+  let accountProof = false;
+  if (account && accPhone && accPassword) {
+    const presented = await accountByPhone(accPhone);
+    if (presented && presented.id === account.id && verifyPassword(accPassword, presented.password)) {
+      accountProof = true;
+    }
+  }
+
+  // Preuve 2 — l'écran lui-même : il connaît son identifiant ET son nom de boutique.
+  // L'enseigne présentée peut être celle du commerce (le QR recopie le nom du patron
+  // dans la fiche locale) : les deux sont acceptées.
+  const presentedName = normName(store_name);
+  const selfProof = Boolean(
+    presentedName &&
+      (presentedName === normName(target.store_name) ||
+        (account && presentedName === normName(account.name))),
+  );
+
+  const anchor = account ? await accountAnchorDevice(account.id) : null;
+  const isAnchor = Boolean(anchor && anchor.device_id === target.device_id);
+
+  if (!canReleaseSeat({ accountProof, selfProof, isAnchor })) {
+    return res.status(403).json({ error: "Preuve insuffisante pour rendre cette place." });
+  }
+
+  await releaseShopSeat(device_id);
+  await db.run("DELETE FROM device_credentials WHERE device_id = $1", [device_id]);
+  console.log(
+    `[${new Date().toISOString()}] PLACE LIBÉRÉE : écran ${device_id} (${target.store_name}) ` +
+      `quitte le compte #${target.account_id ?? "—"} — preuve : ${accountProof ? "compte" : "auto-déclaration"}`,
+  );
+  res.json({ ok: true, released: true, device_id });
 });
 
 export default router;

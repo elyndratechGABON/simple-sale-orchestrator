@@ -25,6 +25,11 @@ CREATE TABLE IF NOT EXISTS shops (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_fingerprint ON shops (device_fingerprint) WHERE device_fingerprint IS NOT NULL;
 
+-- PLACE LIBÉRÉE : l'écran a quitté le commerce (démission, remplacement). La fiche
+-- reste (historique, ventes) mais elle ne compte plus une place : sans cela, le quota
+-- compte les écrans À VIE et un commerce ne peut plus recruter après un départ.
+ALTER TABLE shops ADD COLUMN IF NOT EXISTS released_at BIGINT;
+
 CREATE TABLE IF NOT EXISTS payments (
   id         BIGSERIAL PRIMARY KEY,
   shop_id    BIGINT NOT NULL REFERENCES shops(id),

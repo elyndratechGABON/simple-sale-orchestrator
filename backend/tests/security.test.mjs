@@ -71,6 +71,39 @@ test("le secret par-appareil est stocké HACHÉ", async () => {
   assert.ok(lib.verifyPassword(secret, stored));
 });
 
+test("la place d'un écran qui part est rendue, et le quota ne la compte plus", () => {
+  // La règle du produit : un commerce qui a eu un employé doit pouvoir en recrouver
+  // un autre. Sans libération de place, le quota compte les écrans À VIE.
+  const lib_ = lib;
+
+  // Le compte : la preuve forte.
+  assert.equal(lib_.canReleaseSeat({ accountProof: true, selfProof: false, isAnchor: true }), true);
+  // L'écran qui part : sa propre auto-déclaration suffit, SAUF pour la place
+  // fondatrice — un employé ne peut pas libérer la caisse du patron.
+  assert.equal(lib_.canReleaseSeat({ accountProof: false, selfProof: true, isAnchor: false }), true);
+  assert.equal(lib_.canReleaseSeat({ accountProof: false, selfProof: true, isAnchor: true }), false);
+  // Aucune preuve : refus net.
+  assert.equal(lib_.canReleaseSeat({ accountProof: false, selfProof: false, isAnchor: false }), false);
+
+  // Le quota ne doit PLUS compter les écrans libérés.
+  const libSrc = readFileSync(new URL("../lib.mjs", import.meta.url), "utf8");
+  assert.match(
+    libSrc,
+    /accountDevices[\s\S]{0,220}released_at IS NULL/,
+    "accountDevices doit exclure les écrans dont la place est libérée",
+  );
+  // Et la route doit exister, avec ses deux preuves.
+  const entry = readFileSync(new URL("../routes/entry.mjs", import.meta.url), "utf8");
+  assert.match(entry, /router\.post\("\/api\/v1\/entry\/release"/);
+  assert.match(entry, /verifyPassword\(accPassword, presented\.password\)/);
+  assert.match(entry, /canReleaseSeat\(/);
+  // La libération ne SUPPRIME PAS la fiche : l'historique reste.
+  assert.ok(
+    !/DELETE FROM shops/.test(entry.slice(entry.indexOf('router.post("/api/v1/entry/release"'))),
+    "rendre une place ne doit pas supprimer la fiche de l'écran",
+  );
+});
+
 test("le secret admin n'est pas un mot de passe devinable", () => {
   // Le fallback historique était un hex de 8 caractères : 2^32, épuisable. On vérifie
   // surtout que la valeur SEULE ne suffit pas à ouvrir quoi que ce soit — la vraie

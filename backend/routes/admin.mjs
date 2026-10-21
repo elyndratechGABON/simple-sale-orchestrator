@@ -80,7 +80,13 @@ router.get("/api/v1/admin/shop/:id/devices", requireAdmin, async (req, res) => {
   if (!Number.isFinite(shopId)) return res.status(400).json({ error: "id invalide" });
   const shop = await byId(shopId);
   if (!shop) return res.status(404).json({ error: "Boutique inconnue." });
-  const devices = await db.all("SELECT * FROM shops WHERE account_id = $1 ORDER BY registration_date ASC", shop.account_id ?? 0);
+  // Les écrans dont la place a été LIBÉRÉE (départ) restent dans l'historique mais
+  // ne sont plus des écrans du commerce : les compter ici ferait dire au tableau de
+  // bord « 3/3 » alors qu'une place est disponible.
+  const devices = await db.all(
+    "SELECT * FROM shops WHERE account_id = $1 AND released_at IS NULL ORDER BY registration_date ASC",
+    shop.account_id ?? 0,
+  );
   const account = shop.account_id ? await accountById(shop.account_id) : null;
   res.json({
     shop_id: shop.id,
@@ -1012,7 +1018,11 @@ router.get("/api/v1/admin/storefront", requireAdmin, async (req, res) => {
   // CA, revenu Elyndra — comptait un commerce trois fois quand il a trois écrans.
   const shopRows = await Promise.all(
     groupShopsByAccount(shops).map(async (group) => {
-      const devices = group.devices;
+      // Les écrans PARTIS (place libérée) ne sont plus des écrans du commerce : ils
+      // restent dans l'historique — leur CA continue de compter — mais ils ne
+      // consomment pas de place et ne s'affichent plus comme écrans actifs.
+      const actifs = group.devices.filter((d) => !d.released_at);
+      const devices = actifs.length > 0 ? actifs : group.devices;
       const premier = devices[0];
       const account = group.account_id ? await accountById(group.account_id) : null;
       const inscrites = account ? await accountDevices(account.id) : null;
@@ -1027,7 +1037,9 @@ router.get("/api/v1/admin/storefront", requireAdmin, async (req, res) => {
       const plan = account
         ? planNameForDevices(tierAtPrice ? tierAtPrice.devices : account.max_devices) ?? "Sur mesure"
         : null;
-      const ca = (m) => devices.reduce((s, d) => s + (m.get(d.device_id) ?? 0), 0);
+      // Le CA court sur TOUS les écrans du commerce, partis compris : l'historique
+      // d'un écran qui a quitté le commerce reste du CA du commerce.
+      const ca = (m) => group.devices.reduce((s, d) => s + (m.get(d.device_id) ?? 0), 0);
       const online = devices.some(
         (d) => d.last_sync_at && now - d.last_sync_at < ONLINE_WINDOW_MS,
       );

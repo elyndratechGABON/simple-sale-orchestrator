@@ -123,9 +123,50 @@ export async function generateKeyword(account) {
   throw new Error("Impossible de générer un mot clé unique.");
 }
 
-/** Écrans du compte, du plus ancien au plus récent : l'ordre décide du quota. */
+/** Écrans du compte, du plus ancien au plus récent : l'ordre décide du quota.
+ *  Les places LIBÉRÉES (écran parti) n'en font plus partie : elles sont décomptées du
+ *  quota, sinon le commerce ne pourrait plus recruter après un départ. */
 export const accountDevices = (accountId) =>
-  db.all("SELECT * FROM shops WHERE account_id = $1 ORDER BY registration_date ASC, id ASC", accountId);
+  db.all(
+    "SELECT * FROM shops WHERE account_id = $1 AND released_at IS NULL ORDER BY registration_date ASC, id ASC",
+    accountId,
+  );
+
+/**
+ * Rend la place d'un écran qui quitte le commerce. La fiche est CONSERVÉE (historique,
+ * ventes, activité) : seule la place est rendue, et l'empreinte repart dans le
+ * tiroir — le même téléphone peut réinscrire un autre commerce.
+ */
+export const releaseShopSeat = (deviceId) =>
+  db.run(
+    `UPDATE shops SET released_at = $1, device_fingerprint = NULL, updated_at = $1
+     WHERE device_id = $2 AND released_at IS NULL`,
+    Date.now(),
+    deviceId,
+  );
+
+/** L'écran fondateur du compte — le plus ancien. Sa place ne se rend pas sur une
+ *  simple auto-déclaration : seul le détenteur du compte peut décider. */
+export const accountAnchorDevice = (accountId) =>
+  db.get(
+    "SELECT device_id FROM shops WHERE account_id = $1 AND released_at IS NULL ORDER BY registration_date ASC, id ASC LIMIT 1",
+    accountId,
+  );
+
+/**
+ * Qui peut rendre la place d'un écran ?
+ *
+ *  - `accountProof` : le détenteur du compte présente son téléphone + mot de passe.
+ *  - `selfProof` : l'écran qui part se présente lui-même (device_id + nom de boutique).
+ *
+ * L'auto-déclaration ne vaut pas pour l'écran FONDATEUR : sans cette réserve, un
+ * employé connaissant l'identifiant de la caisse du patron pourrait libérer sa place
+ * et faire basculer le compte hors quota.
+ */
+export function canReleaseSeat({ accountProof, selfProof, isAnchor }) {
+  if (accountProof) return true;
+  return Boolean(selfProof) && !isAnchor;
+}
 
 export function computeAccountStatus(account) {
   if (!account) return "unknown";
