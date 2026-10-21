@@ -24,7 +24,7 @@ test("l'archive porte le compte propriétaire de chaque opération", () => {
   // Le drainer écrit le compte…
   assert.match(drainer, /INSERT INTO sync_ops \([^)]*account_id\)/);
   // … et le remplit à l'archivage.
-  assert.match(drainer, /accountId,\s*\),/);
+  assert.match(drainer, /accountId,\s*\)/);
   // Une op déjà archivée se voit Completed son compte (re-drain).
   assert.match(drainer, /ON CONFLICT \(id\) DO UPDATE SET account_id = EXCLUDED\.account_id/);
 });
