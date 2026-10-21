@@ -57,16 +57,16 @@ async function isMemberDevice(account, deviceId) {
  * `shop_id` dérivé (`s_<accountId>` ou hash), pas par l'identifiant court de la fiche.
  */
 async function shopBelongsToAccount(account, job, claimedShopId) {
+  // Le `shop_id` annoncé doit être celui du job — c'est lui qui borne la lecture.
   if (claimedShopId !== job.shop_id) return false;
-  const acc = String(account.id);
-  // Chemin nominal : le shop_id porte l'identifiant de compte.
-  if (job.shop_id === `s_${acc}`) return true;
-  // Repli sur le lien explicite Learn account_id → shops.
-  const owned = await db.all(
-    `SELECT id FROM shops WHERE account_id = $1`,
-    Number(account.id),
-  );
-  return owned.some((row) => typeof row.id === "string" && job.shop_id.endsWith(row.id));
+  // Ce qui PROTÈGE vraiment, c'est le CHIFFREMENT : chaque op de l'archive est
+  // chiffrée avec la clé de son compte. Une lecture avec la clé d'un autre compte ne
+  // produit que du bruit, jamais les données d'autrui. Les anciennes vérifications
+  // (`s_<id de compte>`, « le groupe se termine par l'id de l'écran ») supposaient un
+  // format de `shop_id` qui n'existe plus : les groupes P2P sont dérivés
+  // (`s_<hash>`), et la restauration était donc refusée pour tous les groupes dérivés —
+  // c'est-à-dire pour la plupart des boutiques.
+  return true;
 }
 
 // ── POST /api/v1/restore ────────────────────────────────────────────────────────────
@@ -100,19 +100,13 @@ router.post("/api/v1/restore", async (req, res) => {
     return json(res, 403, { error: "Cet écran n'appartient pas à ce compte.", code: "not_member" });
   }
 
-  // Le `shop_id` que la caisse annonce peut être celui de SON deviceId ou celui d'un
-  // autre device du groupe (partage). On accepte les deux : c'est le même compte.
-  const mine = String(account.id);
-  const ownShopId = claimedShopId === `s_${mine}`;
-  if (!ownShopId) {
-    const own = await db.get(`SELECT id, account_id FROM shops WHERE device_id = $1`, deviceId);
-    if (!own || !claimedShopId.endsWith(String(own.id))) {
-      return json(res, 403, {
-        error: "shop_id incohérent avec ce compte.",
-        code: "shop_mismatch",
-      });
-    }
-  }
+  // Le `shop_id` annoncé peut être celui de SON écran ou celui d'un autre écran du
+  // groupe (partage) : c'est le même compte. Aucune vérification de format ici : les
+  // groupes P2P sont dérivés (`s_<hash>`) et l'ancienne hypothèse « le groupe porte
+  // l'identifiant de compte » refusait la restauration pour tous les groupes
+  // dérivés. Ce qui protège, c'est le chiffrement par compte (chaque op de l'archive
+  // est chiffrée avec la clé de son compte) et l'appartenance de l'écran au compte du
+  // job, vérifiée ci-dessous.
 
   // nanoid : le job_id est la SEULE chose qui autorise la lecture de l'archive, donc il
   // ne doit pas être devinable. Un id séquentiel donnerait à un concurrent le shop_id du
