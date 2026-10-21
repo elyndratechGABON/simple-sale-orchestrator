@@ -101,7 +101,20 @@ router.post("/api/v1/handshake", async (req, res) => {
       );
       return null;
     }
-    if (presentedAccount && clash.account_id === presentedAccount.id) return null;
+    if (presentedAccount && clash.account_id === presentedAccount.id) {
+      // MÊME commerce, MÊME appareil physique : l'empreinte est la sienne, il
+      // RÉATTRIBUE sa fiche. Sans cela, une réinstallation (ou une purge de la fiche
+      // locale) créait un écran FANTÔME — deux lignes pour un seul téléphone, la
+      // place de l'ancien écran restant occupée pour toujours — et le fondateur du
+      // commerce restait muré sur sa propre boutique.
+      await db.run(
+        "UPDATE shops SET device_id = $1, updated_at = $2 WHERE device_id = $3",
+        deviceId,
+        Date.now(),
+        clash.device_id,
+      );
+      return null;
+    }
     if (clash.account_id) {
       const anchor = await db.get(
         "SELECT device_id FROM shops WHERE account_id = $1 ORDER BY registration_date ASC LIMIT 1",
