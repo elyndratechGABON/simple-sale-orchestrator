@@ -199,7 +199,7 @@ router.get("/api/v1/restore/:job_id", async (req, res) => {
   const cursor = Math.max(0, Number(req.query.cursor) || 0);
 
   const rows = await db.all(
-    `SELECT id, device_id, seq, type, entity_id, payload, payload_enc, created_at, sig
+    `SELECT id, shop_id, device_id, seq, type, entity_id, payload, payload_enc, created_at, sig
        FROM sync_ops
       WHERE account_id = $1
       ORDER BY created_at, id
@@ -235,6 +235,9 @@ router.get("/api/v1/restore/:job_id", async (req, res) => {
     }
     ops.push({
       id: r.id,
+      // Le GROUPE de l'op : sans lui, le rejeu côté caisse ne sait pas à quel
+      // commerce rattacher la fiche d'écran (et la preuve par code s'appuie dessus).
+      shop_id: r.shop_id,
       device_id: r.device_id,
       seq: Number(r.seq),
       type: r.type,
