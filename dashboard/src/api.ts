@@ -871,6 +871,22 @@ export function extendClient(id: number, amount_fcfa: number): Promise<any> {
   });
 }
 
+/**
+ * Rattacher un écran à un commerce (décision de l'administrateur). C'est le recours
+ * quand un écran n'a pas pu rejoindre de lui-même — empreinte déjà prise, code
+ * expiré, place manquante.
+ */
+export function attachDeviceToAccount(
+  accountId: number,
+  deviceId: string,
+  reason?: string,
+): Promise<{ ok: boolean; device_id: string; account_id: number }> {
+  return request(`/api/v1/admin/accounts/${accountId}/attach-device`, {
+    method: "POST",
+    body: JSON.stringify({ device_id: deviceId, reason }),
+  });
+}
+
 export function revokeDevice(deviceId: string, reason?: string): Promise<any> {
   return request(`/api/v1/admin/devices/${encodeURIComponent(deviceId)}/revoke`, {
     method: "POST",

@@ -862,6 +862,57 @@ router.post("/api/v1/admin/clients/:id/extend", requireAdmin, async (req, res) =
   res.json({ ok: true, account: await publicAccount(await accountById(account.id)), renewal });
 });
 
+// ── Action : rattacher un écran à un commerce ─────────────────────────────────────
+// L'administrateur peut rattacher à la main un écran qui n'a pas pu rejoindre de
+// lui-même (empreinte déjà prise par une autre boutique, code expiré, place
+// manquante…). C'est l'équivalent de la bénédiction, mais décidée par Elyndra et non
+// par le patron — le recours quand un client est bloqué et que personne ne peut
+// scanner.
+router.post("/api/v1/admin/accounts/:account_id/attach-device", requireAdmin, async (req, res) => {
+  const account = await accountById(Number(req.params.account_id));
+  if (!account) return res.status(404).json({ error: "Client introuvable." });
+  const session = sessionOf(req);
+  if (!(await accountOriginOk(account, session.scope === "project" ? session.project : null)))
+    return res.status(403).json({ error: "Client hors de ce projet." });
+
+  const device_id = str(req.body?.device_id);
+  if (!device_id) return res.status(400).json({ error: "device_id requis." });
+  const shop = await byDeviceId(device_id);
+  if (!shop)
+    return res.status(404).json({
+      error: "Écran introuvable : il doit d'abord s'être présenté (un seul lancement suffit).",
+    });
+
+  // La PLACE : on n'attache pas un écran au-delà des places payées — il serait
+  // immédiatement « hors quota » (suspendu). Mieux vaut le dire, et que
+  // l'administrateur monte d'abord l'abonnement.
+  if (shop.account_id !== account.id) {
+    const used = (await accountDevices(account.id)).length;
+    if (used >= account.max_devices) {
+      return res.status(409).json({
+        error: `Plus de place sur ce compte (${used}/${account.max_devices}) : montez d'abord l'abonnement, puis rattachez l'écran.`,
+      });
+    }
+  }
+
+  await db.run("UPDATE shops SET account_id = $1, updated_at = $2 WHERE id = $3", account.id, Date.now(), shop.id);
+  await syncShopsFromAccount(account.id);
+  await logAdminAction(req, "account", account.id, "attach_device", device_id);
+  await logActivity(
+    "success",
+    "device",
+    "Écran rattaché",
+    `${shop.store_name} (${device_id}) → ${account.name}`,
+    { device_id, shop_id: shop.id, account_id: account.id },
+    shop.id,
+    account.id,
+  );
+  console.log(
+    `[${new Date().toISOString()}] ÉCRAN RATTACHÉ : ${device_id} → compte #${account.id} (${account.name})`,
+  );
+  res.json({ ok: true, device_id, account_id: account.id });
+});
+
 // ── Action : révoquer un appareil (supprimer une caisse du compte) ────────────────
 router.post("/api/v1/admin/devices/:device_id/revoke", requireAdmin, async (req, res) => {
   const device_id = str(req.params.device_id);

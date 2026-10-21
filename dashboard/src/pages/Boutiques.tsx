@@ -9,11 +9,21 @@ import {
   sendAccountCommand,
   setAccountPlan,
   activateAccount,
+  attachDeviceToAccount,
+  revokeDevice,
   type ShopDetail,
   type DeleteRequest,
 } from "../api";
 import { fmtDate, fmtDateTime, fmtFcfa, statusBadge } from "../utils";
-import { AlertIcon, BanknoteIcon, InboxIcon, LockIcon, SendIcon, XIcon } from "../icons";
+import {
+  AlertIcon,
+  BanknoteIcon,
+  InboxIcon,
+  LockIcon,
+  SendIcon,
+  SmartphoneIcon,
+  XIcon,
+} from "../icons";
 import { DataTable } from "../components/ui/DataTable";
 import { Modal } from "../components/ui/Modal";
 import { OnlineDot } from "../components/ui/OnlineDot";
@@ -59,6 +69,8 @@ export function Boutiques({ onSelect }: Props) {
   const [planPour, setPlanPour] = useState<ShopDetail | null>(null);
   const [messagePour, setMessagePour] = useState<ShopDetail | null>(null);
   const [messageTexte, setMessageTexte] = useState("");
+  const [accesPour, setAccesPour] = useState<ShopDetail | null>(null);
+  const [deviceIdRattache, setDeviceIdRattache] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -201,6 +213,42 @@ export function Boutiques({ onSelect }: Props) {
     try {
       await sendAccountCommand(s.account_id, { action_type: "suspend" });
       setNotice(`« ${nom} » suspendu.`);
+      await rafraichir();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erreur.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Rattacher un écran à ce commerce (recours quand l'écran n'a pas pu rejoindre). */
+  const handleAttach = async () => {
+    if (!accesPour?.account_id || !deviceIdRattache.trim()) return;
+    setBusy(true);
+    try {
+      await attachDeviceToAccount(accesPour.account_id, deviceIdRattache.trim());
+      setNotice(`Écran rattaché à « ${accesPour.account_name || accesPour.store_name} ».`);
+      setDeviceIdRattache("");
+      await rafraichir();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erreur.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Révoquer l'accès d'un écran : il quitte le commerce (la fiche est supprimée). */
+  const handleRevokeDevice = async (deviceId: string, label: string) => {
+    if (
+      !window.confirm(
+        `Révoquer l'accès de l'écran « ${label} » ?\nIl devra être rattaché à nouveau.`,
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      await revokeDevice(deviceId);
+      setNotice(`Accès de « ${label} » révoqué.`);
       await rafraichir();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur.");
@@ -438,6 +486,18 @@ export function Boutiques({ onSelect }: Props) {
                     <>
                       <button
                         className="btn btn-sm btn-ghost"
+                        onClick={() => {
+                          setAccesPour(s);
+                          setDeviceIdRattache("");
+                        }}
+                        disabled={busy}
+                        title="Gérer les écrans de ce commerce"
+                      >
+                        <SmartphoneIcon size={13} />
+                        Accès
+                      </button>
+                      <button
+                        className="btn btn-sm btn-ghost"
                         onClick={() => setPlanPour(s)}
                         disabled={busy}
                         title="Changer l'abonnement (nombre de places)"
@@ -504,6 +564,71 @@ export function Boutiques({ onSelect }: Props) {
           }
         />
       )}
+
+      {/* Gérer les accès : les écrans du commerce, et le rattachement d'un écran
+          qui n'a pas pu rejoindre de lui-même. */}
+      <Modal
+        open={accesPour !== null}
+        onClose={() => setAccesPour(null)}
+        title={`Accès — ${accesPour?.account_name || accesPour?.store_name || ""}`}
+      >
+        <p className="modal-note">
+          {accesPour?.account_device_count ?? 0}/{accesPour?.account_max_devices ?? "?"} places
+          utilisées. Pour rattacher un écran, donnez son identifiant (visible dans la fiche de
+          l&apos;écran, ou dans « Appareils »).
+        </p>
+        <div className="acc-list">
+          {(accesPour?.devices ?? []).map((d) => (
+            <article className="acc" key={d.device_id}>
+              <header className="acc-head">
+                <span className="avatar" aria-hidden>
+                  {(d.store_name || "?").trim().charAt(0).toUpperCase()}
+                </span>
+                <div className="acc-id">
+                  <strong>{d.store_name || d.device_id.slice(0, 8)}</strong>
+                  <div className="meta mono">{d.device_id}</div>
+                </div>
+                <div className="acc-status">
+                  <span className={`badge ${d.status === "suspended" ? "suspended" : "delivered"}`}>
+                    {d.status === "suspended" ? "Suspendu" : "Actif"}
+                  </span>
+                </div>
+              </header>
+              <div className="row-actions">
+                <button
+                  className="btn btn-sm btn-danger-ghost"
+                  onClick={() => void handleRevokeDevice(d.device_id, d.store_name || d.device_id.slice(0, 8))}
+                  disabled={busy}
+                >
+                  Révoquer l'accès
+                </button>
+              </div>
+            </article>
+          ))}
+          {(accesPour?.devices ?? []).length === 0 && (
+            <div className="muted">Aucun écran rattaché.</div>
+          )}
+        </div>
+        <label htmlFor="attach-device">Rattacher un écran (identifiant de l&apos;écran)</label>
+        <input
+          id="attach-device"
+          value={deviceIdRattache}
+          onChange={(e) => setDeviceIdRattache(e.target.value)}
+          placeholder="ex. 3f2a…-…"
+        />
+        <div className="row-actions" style={{ marginTop: 12 }}>
+          <button
+            className="btn btn-primary"
+            onClick={() => void handleAttach()}
+            disabled={busy || !deviceIdRattache.trim()}
+          >
+            Rattacher
+          </button>
+          <button className="btn btn-ghost" onClick={() => setAccesPour(null)}>
+            Fermer
+          </button>
+        </div>
+      </Modal>
 
       {/* Changer l'abonnement : le palier fixe le nombre de places. */}
       <Modal
