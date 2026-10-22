@@ -14,6 +14,7 @@ import {
   DAY_MS,
   SMS_WEBHOOK_TOKEN,
   OPS_RELAY_URL,
+  BACKUP_KEY,
 } from "../config.mjs";
 import {
   str,
@@ -50,6 +51,7 @@ import {
 } from "../lib.mjs";
 import { broadcastStatus, broadcastRequest } from "./auth.mjs";
 import { parseSms } from "../sms-parser.mjs";
+import { archiveKeyFor, decryptArchive } from "../archive-crypto.mjs";
 
 const router = Router();
 
@@ -487,7 +489,143 @@ router.post("/api/v1/handshake", async (req, res) => {
   });
 });
 
-// ── Protocole v3 : sync-data (stockage brut, gated sur le statut du compte) ────────
+// ── Limitation de débit du miroir ────────────────────────────────────────────────
+//
+// Le miroir vérifie un MOT DE PASSE. Sans verrou, cette route est une oracle
+// d'énumération : le téléphone est devinable (numéro de phone), le mot de passe
+// beaucoup moins — mais une boucle de tests finit toujours par trouver le bon.
+//
+// Le mécanisme est celui du dashboard (`routes/auth.mjs`) : on verrouille l'IP après
+// N échecs, et l'IP reste verrouillée un moment. Un client légitime qui réussit
+// voit son compteur remis à zéro.
+const MIRROR_MAX_FAILS = Number(process.env.MIRROR_MAX_FAILS ?? 8);
+const MIRROR_LOCK_MS = Number(process.env.MIRROR_LOCK_MS ?? 15 * 60_000);
+const mirrorFails = new Map(); // ip → { count, until }
+
+function mirrorLocked(ip) {
+  const e = mirrorFails.get(ip);
+  if (!e) return 0;
+  if (e.until && e.until > Date.now()) return e.until - Date.now();
+  if (e.until && e.until <= Date.now()) mirrorFails.delete(ip);
+  return 0;
+}
+function noteMirrorFail(ip) {
+  const e = mirrorFails.get(ip) ?? { count: 0, until: 0 };
+  e.count += 1;
+  if (e.count >= MIRROR_MAX_FAILS) e.until = Date.now() + MIRROR_LOCK_MS;
+  mirrorFails.set(ip, e);
+}
+function clearMirrorFail(ip) {
+  mirrorFails.delete(ip);
+}
+// Purge périodique : la Map ne doit pas grossir avec des IP éphémères (proxies, mobile).
+const mirrorSweep = setInterval(() => {
+  const now = Date.now();
+  for (const [ip, e] of mirrorFails) if (e.until && e.until <= now) mirrorFails.delete(ip);
+}, 60_000);
+mirrorSweep.unref?.();
+
+// ── MIROIR LOCAL : les opérations du compte, pour une instance locale ─────────────
+//
+// L'instance locale (le PC du commerçant) doit pouvoir garder une COPIE des données
+// du commerce : c'est elle qui sert la restauration quand le cloud est injoignable,
+// ou quand le commerçant veut ses données chez lui.
+//
+// L'instance locale TIRE (le serveur ne pousse jamais — cf. `docs/orchestrateur-flux.md`),
+// et s'authentifie avec les MÊMES identifiants de compte que la caisse : téléphone +
+// mot de passe. Le miroir ne renvoie QUE les opérations de ce compte : aucune fuite.
+//
+// `since` : horodatage du dernier miroir (ms) — l'instance ne prend que ce qui
+// manque. Sans lui, tout l'historique est renvoyé.
+//
+// C'est un POST et non un GET : les identifiants du compte voyagent dans le CORPS,
+// jamais dans l'URL — une URL est journalisée par les proxies et les serveurs.
+router.post("/api/v1/mirror/ops", async (req, res) => {
+  const body = req.body ?? {};
+  const accPhone = normPhone(str(body.account_phone));
+  const accPassword = str(body.account_password);
+  if (!accPhone || !accPassword) {
+    return res.status(400).json({ error: "account_phone et account_password requis." });
+  }
+  // Limitation de débit : cette route vérifie un MOT DE PASSE. Sans verrou, c'est une
+  // oracle d'énumération (le téléphone est devinable, le mot de passe beaucoup moins).
+  const ip = req.socket.remoteAddress ?? "inconnu";
+  const remaining = mirrorLocked(ip);
+  if (remaining > 0) {
+    return res
+      .status(429)
+      .json({ error: `Trop de tentatives. Réessayez dans ${Math.ceil(remaining / 60_000)} min.` });
+  }
+  const account = await accountByPhone(accPhone);
+  if (!account || !verifyPassword(accPassword, account.password)) {
+    noteMirrorFail(ip);
+    return res.status(401).json({ error: "Identifiants du compte incorrects." });
+  }
+  clearMirrorFail(ip);
+  const resolved = await resolveAccount(account);
+  if (!resolved) return res.status(404).json({ error: "Compte introuvable." });
+
+  // Sans BACKUP_KEY, l'archive ne peut pas être déchiffrée : le dire, plutôt que
+  // renvoyer une 500 opaque. (Le cas est réel : le secret est optionnel au démarrage.)
+  let key;
+  try {
+    key = archiveKeyFor(BACKUP_KEY, resolved.id);
+  } catch (err) {
+    return res.status(503).json({
+      error: `Chiffrement indisponible côté serveur : ${err.message}`,
+      code: "no_key",
+    });
+  }
+
+  const since = Number(body.since) || 0;
+  const limit = Math.min(5000, Math.max(1, Number(body.limit) || 1000));
+  const rows = await db.all(
+    `SELECT id, shop_id, device_id, seq, type, entity_id, payload, payload_enc, created_at, sig
+       FROM sync_ops
+      WHERE account_id = $1 AND created_at >= $2
+      ORDER BY created_at, id
+      LIMIT $3`,
+    resolved.id,
+    since,
+    limit,
+  );
+  const ops = [];
+  let degraded = 0;
+  for (const r of rows) {
+    let payload = null;
+    try {
+      payload = decryptArchive(r.payload_enc ?? r.payload, key);
+    } catch {
+      // Une ligne corrompue ne doit pas faire tomber TOUTE la page : on la saute.
+      degraded++;
+      continue;
+    }
+    ops.push({
+      id: r.id,
+      shop_id: r.shop_id,
+      device_id: r.device_id,
+      seq: Number(r.seq),
+      type: r.type,
+      entity_id: r.entity_id,
+      payload,
+      created_at: Number(r.created_at),
+      ...(r.sig ? { sig: r.sig } : {}),
+    });
+  }
+  const dernier = rows.length > 0 ? Number(rows[rows.length - 1].created_at) : since;
+  res.json({
+    ok: true,
+    account_id: resolved.id,
+    account_name: resolved.name,
+    ops,
+    // Curseur du prochain miroir : l'instance le garde, et ne demandera que ce qui
+    // manque la fois suivante.
+    since: dernier,
+    has_more: rows.length >= limit,
+    ...(degraded ? { skipped: degraded } : {}),
+  });
+});
+
 router.post("/api/v1/sync-data", async (req, res) => {
   const body = req.body ?? {};
   const device_id = str(body.device_id);
