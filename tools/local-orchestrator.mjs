@@ -21,6 +21,8 @@
 //   ACCOUNT_PHONE=07657843 ACCOUNT_PASSWORD=... \
 //   node tools/local-orchestrator.mjs
 import { createServer } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
+import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -34,6 +36,11 @@ const config = () => ({
   password: process.env.ACCOUNT_PASSWORD ?? "",
   db: process.env.LOCAL_DB ?? join(process.cwd(), "data", "mirror.sqlite"),
   interval: Number(process.env.MIRROR_INTERVAL_MS ?? 15 * 60_000),
+  // HTTPS : l'application est servie en HTTPS, et le navigateur REFUSE qu'une page
+  // HTTPS appelle une adresse HTTP (contenu mixte). Sans certificat, la caisse ne
+  // peut donc PAS joindre l'instance locale — d'où cette option.
+  cert: process.env.LOCAL_TLS_CERT ?? "",
+  key: process.env.LOCAL_TLS_KEY ?? "",
 });
 
 const PORT = Number(process.env.PORT ?? 8788);
@@ -252,7 +259,7 @@ async function lireCorps(req) {
 
 // ── Le serveur local ─────────────────────────────────────────────────────────────
 export function creerServeur() {
-  return createServer(async (req, res) => {
+  const handler = async (req, res) => {
     const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
     const chemin = url.pathname;
 
@@ -341,7 +348,18 @@ export function creerServeur() {
     }
 
     return json(res, 404, { error: "Route inconnue." });
-  });
+  };
+
+  // HTTPS si un certificat est fourni : sans lui, la caisse (servie en HTTPS) ne peut
+  // PAS joindre l'instance — le navigateur bloque le contenu mixte.
+  const cfg = config();
+  if (cfg.cert && cfg.key) {
+    return createHttpsServer(
+      { cert: readFileSync(cfg.cert), key: readFileSync(cfg.key) },
+      handler,
+    );
+  }
+  return createServer(handler);
 }
 
 /** Ferme la base locale (indispensable sous Windows : le fichier reste verrouillé
@@ -357,10 +375,22 @@ export function fermer() {
 // Lancement direct (et non importé par un test).
 if (process.argv[1] && process.argv[1].endsWith("local-orchestrator.mjs")) {
   const server = creerServeur();
+  const enHttps = Boolean(config().cert && config().key);
   server.listen(PORT, () => {
-    console.log(`Orchestrateur local sur http://localhost:${PORT}`);
+    console.log(`Orchestrateur local sur ${enHttps ? "https" : "http"}://localhost:${PORT}`);
     console.log(`  miroir : ${config().cloud} (compte ${config().phone})`);
     console.log(`  archive locale : ${dbPath}`);
+    if (!enHttps) {
+      // L'avertissement qui compte : sans HTTPS, la CAISSE ne peut pas joindre cette
+      // instance (elle est servie en HTTPS, et le navigateur bloque le contenu mixte).
+      // Le miroir, lui, fonctionne dans les deux sens — c'est la restauration qui
+      // souffre.
+      console.log(
+        "  ⚠️  SANS CERTIFICAT : la caisse ne peut PAS vous joindre (contenu mixte).\n" +
+          "     Seul le miroir fonctionne. Pour la restauration, fournissez\n" +
+          "     LOCAL_TLS_CERT et LOCAL_TLS_KEY (un certificat reconnu par le téléphone).",
+      );
+    }
   });
   miroir()
     .then((r) => console.log(`  premier miroir : ${r.recues} opération(s)`))
