@@ -112,7 +112,78 @@ export async function miroir() {
     );
   }
   if (Number(data.since) > since) setState("since", Number(data.since));
+  // La borne basse de l'archive du cloud : ce qu'il a encore. Tout ce qui est plus
+  // ancien a été purgé — c'est ce que le local lui rendra.
+  if (data.oldest_created_at !== undefined && data.oldest_created_at !== null) {
+    setState("oldest_created_at", Number(data.oldest_created_at));
+  }
   return { recues: ops.length, since: Number(data.since ?? since) };
+}
+
+/**
+ * La REMONTÉE : l'instance locale rend au cloud ce que la rétention a purgé.
+ *
+ * Le cloud garde l'archive six mois, puis il oublie. La copie locale, elle, garde
+ * tout. Sans cette remontée, la copie locale serait une archive morte : on ne
+ * pourrait pas la relire (elle ne sert qu'à la restauration locale) ni la
+ * rendre au cloud quand celui-ci a oublié.
+ *
+ * Le cloud VÉRIFIE la signature de chaque op : la route refuse ce qu'il ne sait
+ * pas rattacher à un appareil du compte. Le local ne peut donc pas y injecter un
+ * historique fabriqué — il rend ce que les écrans ont réellement signé.
+ *
+ * On ne renvoie que ce qui est PLUS ANCIEN que la borne basse du cloud : le reste
+ * y est déjà.
+ */
+export async function remontee() {
+  const cfg = config();
+  const borneCloud = Number(state("oldest_created_at") ?? 0);
+  // Sans borne connue (jamais de miroir réussi), on ne renvoie rien : le cloud
+  // n'a rien oublié de connu, et tout renvoyer serait du gaspillage.
+  if (!borneCloud) return { renvoyees: 0, raison: "borne inconnue" };
+
+  const ops = db
+    .prepare(
+      `SELECT id, shop_id, device_id, seq, type, entity_id, payload, created_at, sig
+         FROM mirror_ops WHERE created_at < ? ORDER BY created_at, id LIMIT ?`,
+    )
+    .all(borneCloud, 2000)
+    .map((r) => ({
+      id: r.id,
+      shop_id: r.shop_id,
+      device_id: r.device_id,
+      seq: Number(r.seq),
+      type: r.type,
+      entity_id: r.entity_id,
+      payload: r.payload ? JSON.parse(r.payload) : null,
+      created_at: Number(r.created_at),
+      ...(r.sig ? { sig: r.sig } : {}),
+    }));
+  if (ops.length === 0) return { renvoyees: 0 };
+
+  const res = await fetch(`${cfg.cloud}/api/v1/mirror/push`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      account_phone: cfg.phone,
+      account_password: cfg.password,
+      ops,
+    }),
+  });
+  if (!res.ok) throw new Error(`Remontée refusée : HTTP ${res.status}`);
+  const data = await res.json();
+  return {
+    renvoyees: Number(data.acceptes ?? 0),
+    refusees: Number(data.refuses ?? 0),
+    doublons: Number(data.doublons ?? 0),
+  };
+}
+
+/** Un cycle complet : on descend (le cloud → local), puis on remonte ce qui a été oublié. */
+export async function synchroniser() {
+  const descendu = await miroir();
+  const remonte = await remontee();
+  return { ...descendu, ...remonte };
 }
 
 const PAGE_SIZE = 100;
@@ -232,7 +303,7 @@ export function creerServeur() {
     // 2. Le miroir part tout seul, régulièrement.
     if (chemin === "/api/v1/local/mirror" && req.method === "POST") {
       try {
-        const r = await miroir();
+        const r = await synchroniser();
         return json(res, 200, { ok: true, ...r });
       } catch (e) {
         return json(res, 502, { error: e instanceof Error ? e.message : "Miroir impossible." });
@@ -248,7 +319,7 @@ export function creerServeur() {
     //    n'importe qui sur le réseau local pourrait tester des mots de passe sans
     //    jamais être bloqué. Le miroir local a son propre chemin (ci-dessus).
     if (chemin.startsWith("/api/")) {
-      if (chemin === "/api/v1/mirror/ops") {
+      if (chemin === "/api/v1/mirror/ops" || chemin === "/api/v1/mirror/push") {
         return json(res, 403, { error: "Le miroir se tire directement du cloud." });
       }
       const cible = `${config().cloud}${req.url}`;
@@ -295,9 +366,10 @@ if (process.argv[1] && process.argv[1].endsWith("local-orchestrator.mjs")) {
     .then((r) => console.log(`  premier miroir : ${r.recues} opération(s)`))
     .catch((e) => console.error(`  premier miroir impossible : ${e.message}`));
   setInterval(() => {
-    miroir()
+    synchroniser()
       .then((r) => {
         if (r.recues > 0) console.log(`miroir : ${r.recues} opération(s) reçue(s)`);
+        if (r.renvoyees > 0) console.log(`remontée : ${r.renvoyees} opération(s) rendue(s)`);
       })
       .catch((e) => console.error(`miroir impossible : ${e.message}`));
   }, MIRROR_INTERVAL_MS);

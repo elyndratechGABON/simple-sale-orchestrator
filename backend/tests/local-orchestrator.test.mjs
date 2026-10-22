@@ -15,18 +15,25 @@ process.env.ACCOUNT_PASSWORD = "mot-de-passe-de-test";
 
 let fauxCloud;
 let portCloud;
-const { creerServeur, miroir, fermer } = await import("../../tools/local-orchestrator.mjs");
+/** Ce que le faux cloud a reçu en REMONTÉE (l'instance locale rend au cloud). */
+const remises = { ops: [] };
+/** La borne basse que le faux cloud annonce : tout ce qui est plus ancien a été purgé. */
+let borneBasse = 3000;
+
+const { creerServeur, miroir, remontee, synchroniser, fermer } = await import(
+  "../../tools/local-orchestrator.mjs"
+);
 
 before(async () => {
   fauxCloud = createServer((req, res) => {
     const url = new URL(req.url, "http://x");
-    if (url.pathname === "/api/v1/mirror/ops") {
+    let corps = "";
+    req.on("data", (m) => {
+      corps += m;
+    });
+    req.on("end", () => {
       // Le faux cloud répond comme le vrai : POST, corps JSON.
-      let corps = "";
-      req.on("data", (m) => {
-        corps += m;
-      });
-      req.on("end", () => {
+      if (url.pathname === "/api/v1/mirror/ops") {
         const since = Number(JSON.parse(corps || "{}").since ?? 0);
         const ops =
           since === 0
@@ -63,12 +70,28 @@ before(async () => {
             ops,
             since: since === 0 ? 2000 : since,
             has_more: false,
+            oldest_created_at: borneBasse,
           }),
         );
-      });
-      return;
-    }
-    res.writeHead(404).end("{}");
+        return;
+      }
+      // La REMONTÉE : le cloud reçoit ce que le local lui rend.
+      if (url.pathname === "/api/v1/mirror/push") {
+        const recu = JSON.parse(corps || "{}");
+        remises.ops.push(...(recu.ops ?? []));
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            ok: true,
+            acceptes: (recu.ops ?? []).length,
+            refuses: 0,
+            doublons: 0,
+          }),
+        );
+        return;
+      }
+      res.writeHead(404).end("{}");
+    });
   });
   await new Promise((r) => fauxCloud.listen(0, r));
   portCloud = fauxCloud.address().port;
@@ -90,6 +113,46 @@ test("le miroir tire les opérations du cloud et les garde en local", async () =
 test("un second miroir ne ramène pas ce qui est déjà là", async () => {
   const r = await miroir();
   assert.equal(r.recues, 0, "le curseur doit empêcher un doublon");
+});
+
+test("la REMONTÉE rend au cloud ce que la rétention a purgé", async () => {
+  // Le cloud annonce une borne basse à 3000 : les ops de 1000 et 2000 sont
+  // oubliées, il faut donc les lui rendre.
+  remises.ops.length = 0;
+  const r = await remontee();
+  assert.equal(r.renvoyees, 2);
+  assert.equal(remises.ops.length, 2);
+  // Ce sont bien les ops PURGÉES, pas les récentes.
+  assert.deepEqual(
+    remises.ops.map((o) => o.id).sort(),
+    ["op-1", "op-2"],
+  );
+  // Et elles gardent leur signature : le cloud vérifie, il ne fait pas confiance.
+  assert.equal(remises.ops[0].sig, "sig-1");
+  // La charge utile est relisible (déchiffrée).
+  assert.equal(remises.ops.find((o) => o.id === "op-1").payload.total, 100);
+});
+
+test("la remontée ne renvoie rien quand le cloud n'a rien oublié", async () => {
+  // Borne basse à 0 : le cloud a TOUT. (0 = « rien d'anciennement purgé ».)
+  // Il faut un miroir pour que la nouvelle borne soit connue.
+  borneBasse = 0;
+  await miroir();
+  remises.ops.length = 0;
+  const r = await remontee();
+  assert.equal(r.renvoyees, 0);
+  assert.equal(remises.ops.length, 0);
+  // On remet la borne pour les tests suivants.
+  borneBasse = 3000;
+  await miroir();
+});
+
+test("un cycle complet descend ET remonte", async () => {
+  remises.ops.length = 0;
+  borneBasse = 3000;
+  const r = await synchroniser();
+  assert.equal(r.recues, 0, "rien de nouveau à descendre");
+  assert.equal(r.renvoyees, 2, "les ops purgées sont rendues");
 });
 
 test("la restauration est servie DEPUIS le local, avec les opérations archivées", async () => {

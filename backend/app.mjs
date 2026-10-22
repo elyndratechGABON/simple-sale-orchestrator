@@ -15,6 +15,7 @@ import authRouter, { sessionOf } from "./routes/auth.mjs";
 import entryRouter from "./routes/entry.mjs";
 import adminRouter from "./routes/admin.mjs";
 import ccRouter from "./routes/cc.mjs";
+import mirrorRouter from "./routes/mirror.mjs";
 import restoreRouter from "./routes/restore.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -59,6 +60,7 @@ app.use(authRouter); //  POST /api/login, GET /api/config, GET /api/events
 app.use(entryRouter); // protocole caisse : handshake, sync-data, demandes, webhook SMS
 app.use(adminRouter); // routes admin legacy + gestion fiches
 app.use(ccRouter); // Control Center
+app.use(mirrorRouter); // POST /api/v1/mirror/{ops,push} — copie locale chez le commerçant
 app.use(restoreRouter); // POST/GET /api/v1/restore — restauration depuis l'archive chiffrée
 
 // ── Drainer SANS attente (cron Vercel) ──────────────────────────────────────────
