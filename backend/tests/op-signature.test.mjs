@@ -25,7 +25,7 @@ const OP = {
   shop_id: "s_42",
   device_id: "dev-1",
   seq: 7,
-  type: "sale",
+  type: "sale.created",
   entity_id: "v-1",
   payload: { total: 100, items: [{ qte: 2, sku: "A" }], client: { nom: "Ada" } },
   created_at: 1700000000000,
@@ -36,7 +36,7 @@ const OP = {
 // Ce corps exact est celui que la caisse signe. Ne pas le modifier sans modifier
 // `src/lib/syncengine/identity/crypto.test.ts` côté client (et inversement).
 const CORPS_EPINGLE =
-  '{"id":"op-1","shop_id":"s_42","device_id":"dev-1","seq":7,"type":"sale",' +
+  '{"id":"op-1","shop_id":"s_42","device_id":"dev-1","seq":7,"type":"sale.created",' +
   '"entity_id":"v-1","payload":{"client":{"nom":"Ada"},"items":[{"qte":2,"sku":"A"}],"total":100},' +
   '"created_at":1700000000000}';
 
