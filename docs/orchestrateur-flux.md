@@ -49,6 +49,15 @@ sequenceDiagram
 La sync envoie le **profil** (identité boutique, abonnement) + des **agrégats légers**
 (7 jours, via `computePeriodStats`) — jamais les lignes de vente brutes.
 
+## Le miroir local
+
+Le cloud garde l'archive des opérations. Une instance locale — un service que le
+commerçant lance sur son ordinateur — en garde une copie chez lui et sait la
+**rendre** au cloud quand la rétention l'a purgée. Détail et démarrage :
+[`docs/miroir-local.md`](miroir-local.md).
+
+Comme le reste : le cloud ne pousse jamais, c'est l'instance locale qui tire.
+
 ## Champ `app_origin`
 
 Ajouté dès maintenant au handshake et à `sync_payloads` (défaut `'pos'`) : il permettra

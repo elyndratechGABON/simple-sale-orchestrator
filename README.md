@@ -13,6 +13,21 @@ npm run dev:dashboard  # dashboard en dev (proxie /api vers le backend)
 npm run build:dashboard  # dashboard statique servi par le backend à /
 ```
 
+### L'instance locale (la copie chez le commerçant)
+
+Une instance locale garde une copie de l'archive du commerce sur l'ordinateur du
+commerçant, et la rend au cloud quand la rétention l'a purgée :
+
+```bash
+CLOUD_URL=https://simple-sale-orchestrator.vercel.app \
+ACCOUNT_PHONE=... ACCOUNT_PASSWORD=... \
+node tools/local-orchestrator.mjs
+```
+
+Elle sert la restauration et proxifie le reste de l'API. Le **HTTPS est
+indispensable** pour que la caisse la joigne (le navigateur bloque le contenu
+mixte) : `LOCAL_TLS_CERT` et `LOCAL_TLS_KEY`. Détail : [`docs/miroir-local.md`](docs/miroir-local.md).
+
 ## Structure
 
 | Chemin                     | Contenu                                               |
@@ -21,7 +36,9 @@ npm run build:dashboard  # dashboard statique servi par le backend à /
 | `dashboard/`               | app admin séparée (Vite+React+TS), servie par le backend |
 | `orchestrator/data/`       | base SQLite live (gitignorée)                         |
 | `docs/orchestrateur-flux.md` | flux v2 : handshake, ordres, sync, `app_origin`     |
+| `docs/miroir-local.md`     | le miroir local : copie chez le commerçant            |
 | `legacy/`                  | v1 hors service (server.mjs, fonctions Vercel, …)     |
+| `tools/local-orchestrator.mjs` | l'instance locale (miroir + restauration)          |
 | `tools/orchestrateur-launcher/` | lanceur Windows de la console admin              |
 
 ## Configuration
