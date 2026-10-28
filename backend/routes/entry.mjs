@@ -306,7 +306,12 @@ router.post("/api/v1/handshake", async (req, res) => {
           device_fingerprint = COALESCE($6, device_fingerprint),
           app_origin     = $7,
           updated_at     = $8,
-          public_key    = COALESCE($10, public_key)
+          public_key    = COALESCE($10, public_key),
+          -- Le NOM et le NUMÉRO de l'écran (l'employé qui a scanné le QR du patron).
+          -- COALESCE : une saisie VIDE ne remplace pas un nom déjà connu — seule une
+          -- valeur non vide met à jour la fiche.
+          employee_name  = COALESCE($11, employee_name),
+          employee_phone = COALESCE($12, employee_phone)
        WHERE id = $9`,
       optStr(body.owner_name),
       optStr(body.store_name),
@@ -324,14 +329,19 @@ router.post("/api/v1/handshake", async (req, res) => {
       // est VOLONTAIREMENT écrite à chaque handshake : une rotation de clé ne doit pas
       // laisser l'écran incapable de prouver quoi que ce soit.
       optStr(body.device_public_key),
+      // Le nom et le numéro de l'écran : transmis par la caisse au handshake
+      // (l'employé les saisit au scan du QR). Vides si l'écran ne les a jamais saisis.
+      optStr(body.employee_name),
+      optStr(body.employee_phone),
     );
     shop = await byId(shop.id);
   } else {
     await db.run(
       `INSERT INTO shops
          (device_id, owner_name, store_name, phone, location, registration_date,
-          expiry_date, created_at, updated_at, app_version_used, app_origin, device_fingerprint, public_key)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+          expiry_date, created_at, updated_at, app_version_used, app_origin, device_fingerprint, public_key,
+          employee_name, employee_phone)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
       device_id,
       optStr(body.owner_name) ?? "",
       optStr(body.store_name) ?? "Boutique",
@@ -350,6 +360,10 @@ router.post("/api/v1/handshake", async (req, res) => {
       pendingBlessing ? null : device_fingerprint,
       // La clé publique de l'appareil (voir l'UPDATE ci-dessus).
       optStr(body.device_public_key),
+      // Le nom et le numéro de l'écran : saisis par l'employé au scan du QR et
+      // transmis au handshake. Vides s'il ne les a pas saisis.
+      optStr(body.employee_name),
+      optStr(body.employee_phone),
     );
     shop = await byDeviceId(device_id);
   }

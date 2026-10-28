@@ -150,13 +150,26 @@ export const listShops = (origin) =>
  * affichait l'employé comme un deuxième commerçant — ce qu'il n'a jamais été.
  *
  * L'ordre suit celui de `listShops` (échéance la plus proche d'abord) ; les écrans d'un
- * commerce sont rendus du plus ancien au plus récent. Un écran SANS compte reste sa propre
- * ligne : on ne le range pas sous une boutique à laquelle il n'appartient pas.
+ * commerce sont rendus du plus ancien au plus récent.
+ *
+ * Deux clés de regroupement :
+ *  - `account:<id>` quand l'écran est rattaché à un compte marchand — la clé fiable ;
+ *  - `com:<enseigne>|<telephone>` pour les écrans ENCORE ORPHELINS (compte pas encore
+ *    résolu) : sans cela, les 3 écrans d'un même commerce s'affichaient comme
+ *    3 boutiques identiques — le « doublon » que la console doit faire disparaître.
+ *    La clé combine l'enseigne ET le téléphone du patron (que le QR recopie sur chaque
+ *    écran) : deux commerces distincts ne partagent pas les deux à la fois.
+ *  - à défaut d'identité connue (`device:<id>`), l'écran reste sa propre ligne.
  */
 export function groupShopsByAccount(shops) {
   const groups = new Map();
   for (const s of shops) {
-    const key = s.account_id != null ? `account:${s.account_id}` : `device:${s.id}`;
+    const key =
+      s.account_id != null
+        ? `account:${s.account_id}`
+        : s.store_name
+          ? `com:${String(s.store_name).trim().toLowerCase()}|${String(s.phone ?? "").trim().toLowerCase()}`
+          : `device:${s.id}`;
     const existing = groups.get(key);
     if (existing) existing.devices.push(s);
     else groups.set(key, { account_id: s.account_id ?? null, devices: [s] });
@@ -539,6 +552,81 @@ export async function mergeAccountsByName() {
   const rows = await db.all("SELECT store_name FROM shops WHERE account_id IS NOT NULL");
   const keys = new Set(rows.map((r) => normName(r.store_name)).filter(Boolean));
   for (const key of keys) await mergeGroupForKey(key);
+  await mergeTrialAccountsByNearName();
+}
+
+/**
+ * Distance d'édition ≤ 1 : « RORO » et « ROROr » sont le MÊME commerce saisi deux fois
+ * (une lettre en trop). Renvoie faux si les deux chaînes sont identiques — l'égalité
+ * stricte est déjà traitée par `mergeGroupForKey`.
+ */
+function nearName(a, b) {
+  if (a === b) return false;
+  const la = a.length;
+  const lb = b.length;
+  if (Math.abs(la - lb) > 1) return false;
+  let i = 0;
+  let j = 0;
+  let ops = 0;
+  while (i < la && j < lb) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    if (++ops > 1) return false;
+    if (la > lb) i++;
+    else if (lb > la) j++;
+    else { i++; j++; }
+  }
+  if (i < la || j < lb) ops++;
+  return ops <= 1;
+}
+
+/**
+ * Fusionne les comptes d'ESSAI dont l'enseigne ne diffère que d'une lettre — le doublon
+ * que la console doit faire disparaître (« RORO » et « ROROr » = une seule boutique,
+ * donc UNE seule carte et UN seul abonnement).
+ *
+ * Garde-fou : on ne fusionne que des comptes **sans aucun paiement** (donc sans revenu
+ * en jeu) qui portent **le même patron**. Deux commerces réellement différents ont
+ * rarely le même patron ET le même nom à une lettre près ; un compte qui a payé, lui,
+ * n'est jamais absorbé automatiquement — c'est une décision humaine.
+ */
+async function mergeTrialAccountsByNearName() {
+  const accounts = await db.all(
+    "SELECT id, name, owner_name, expiry_date FROM accounts WHERE merged_into IS NULL",
+  );
+  const paymentCount = async (id) =>
+    (await db.get("SELECT COUNT(*) AS c FROM payments WHERE account_id = $1", id)).c;
+
+  // Les enseignes (normalisées) portées par chaque compte.
+  const namesByAccount = new Map();
+  const shops = await db.all("SELECT account_id, store_name FROM shops WHERE account_id IS NOT NULL");
+  for (const s of shops) {
+    const n = normName(s.store_name);
+    if (!n) continue;
+    if (!namesByAccount.has(s.account_id)) namesByAccount.set(s.account_id, new Set());
+    namesByAccount.get(s.account_id).add(n);
+  }
+
+  const fusibles = [];
+  for (const a of accounts) {
+    for (const b of accounts) {
+      if (a.id >= b.id) continue;
+      if (!str(a.owner_name) || normName(a.owner_name) !== normName(b.owner_name)) continue;
+      const na = namesByAccount.get(a.id) ?? new Set();
+      const nb = namesByAccount.get(b.id) ?? new Set();
+      const proche = [...na].some((x) => [...nb].some((y) => nearName(x, y)));
+      if (!proche) continue;
+      fusibles.push([a, b]);
+    }
+  }
+
+  for (const [a, b] of fusibles) {
+    const [pa, pb] = await Promise.all([paymentCount(a.id), paymentCount(b.id)]);
+    if (pa > 0 || pb > 0) continue; // un compte payé n'est jamais absorbé automatiquement
+    // Survivant : le plus ancien (l'inscription d'origine fait foi).
+    const survivor = a.id < b.id ? a : b;
+    const merged = survivor === a ? b : a;
+    await mergeAccountInto(merged, survivor);
+  }
 }
 
 export function computeStatus(shop) {

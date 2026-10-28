@@ -209,6 +209,19 @@ export interface ShopDevice {
   app_version_used: string | null;
 }
 
+/** Un EMPLOYÉ de la boutique : c'est un ÉCRAN (un poste) avec un nom et un numéro,
+ *  saisis par l'employé au scan du QR. `nom`/`telephone` sont vides s'il ne les a pas
+ *  déclarés — l'admin voit alors « non déclaré » plutôt qu'une valeur devinée. */
+export interface Employe {
+  device_id: string;
+  nom: string | null;
+  telephone: string | null;
+  est_proprietaire: boolean;
+  en_ligne: boolean;
+  statut: string;
+  derniere_sync: number | null;
+}
+
 /** Une LIGNE = un commerce (compte marchand). `devices` liste ses écrans — le patron et
  *  ses employés : autant de postes, UNE seule boutique. */
 export interface ShopDetail {
@@ -234,6 +247,10 @@ export interface ShopDetail {
   status: string;
   payments: number;
   online: boolean;
+  /** Combien de personnes utilisent ce commerce (écrans vivants). */
+  nombre_employes?: number;
+  /** La liste des employés : nom + numéro + état. */
+  employes?: Employe[];
   devices?: ShopDevice[];
 }
 

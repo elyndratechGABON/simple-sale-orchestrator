@@ -222,6 +222,21 @@ router.get("/api/v1/admin/shops-detail", requireAdmin, async (req, res) => {
       const account = group.account_id ? await accountById(group.account_id) : null;
       const resolvedAccount = account ? await resolveAccount(account) : null;
       const accountDevicesList = resolvedAccount ? await accountDevices(resolvedAccount.id) : [];
+      // Les écrans VIVANTS du commerce (une place libérée ne compte plus).
+      const actifs = group.devices.filter((d) => !d.released_at);
+      // Les EMPLOYÉS : un écran = un poste. On affiche le NOM et le NUMÉRO saisis par
+      // l'employé au scan du QR — et non un device_id technique. Un écran qui n'a rien
+      // déclaré (le propriétaire, ou un ancien poste) reste identifié par son device_id.
+      const employes = actifs.map((d) => ({
+        device_id: d.device_id,
+        nom: d.employee_name || null,
+        telephone: d.employee_phone || null,
+        // Le propriétaire de la boutique n'est pas un « employé » : c'est le compte.
+        est_proprietaire: !d.employee_name,
+        en_ligne: !!(d.last_sync_at && now - d.last_sync_at < ONLINE_WINDOW_MS),
+        statut: d.suspended_at ? "suspended" : computeStatus(d),
+        derniere_sync: d.last_sync_at ?? null,
+      }));
       return {
         id: premier.id,
         device_id: premier.device_id,
@@ -249,15 +264,18 @@ router.get("/api/v1/admin/shops-detail", requireAdmin, async (req, res) => {
         status: resolvedAccount ? computeAccountStatus(resolvedAccount) : computeStatus(premier),
         payments: devices.reduce((n, d) => n + Number(d.payments || 0), 0),
         online: devices.some((d) => d.last_sync_at && now - d.last_sync_at < ONLINE_WINDOW_MS),
+        // Combien de personnes utilisent ce commerce (écrans vivants) et QUI.
+        nombre_employes: employes.length,
+        employes,
         // Les écrans du commerce : c'est ici qu'un employé apparaît, comme poste.
         // Les écrans dont la place a été LIBÉRÉE (départ) n'y sont plus : ils ne
         // comptent plus (cf. `account_device_count`) et n'ont plus à être listés.
-        devices: group.devices
-          .filter((d) => !d.released_at)
-          .map((d) => ({
+        devices: actifs.map((d) => ({
             device_id: d.device_id,
             store_name: d.store_name,
             owner_name: d.owner_name,
+            employee_name: d.employee_name || null,
+            employee_phone: d.employee_phone || null,
             status: d.suspended_at ? "suspended" : computeStatus(d),
             suspended_at: d.suspended_at ?? null,
             online: !!(d.last_sync_at && now - d.last_sync_at < ONLINE_WINDOW_MS),

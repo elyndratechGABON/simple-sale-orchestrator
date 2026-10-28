@@ -21,9 +21,20 @@ CREATE TABLE IF NOT EXISTS shops (
   last_sync_at       BIGINT,
   app_origin         TEXT NOT NULL DEFAULT 'pos',
   account_id         BIGINT,
-  device_fingerprint TEXT
+  device_fingerprint TEXT,
+  -- L'ÉCRAN et son titulaire : un employé saisit son NOM et son NUMÉRO au scan du QR
+  -- du patron (cf. useWelcomeFlow côté caisse). Sans ces deux colonnes, la console
+  -- n'affichait que des device_id techniques et le téléphone du propriétaire.
+  employee_name      TEXT,
+  employee_phone     TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_fingerprint ON shops (device_fingerprint) WHERE device_fingerprint IS NOT NULL;
+
+-- Colonnes ajoutées en runtime sur des bases déjà en service : le nom et le numéro de
+-- l'écran arrivent APRÈS la création de la table (handshake), on les ajoute donc aussi
+-- sous forme d'ALTER idempotent.
+ALTER TABLE shops ADD COLUMN IF NOT EXISTS employee_name TEXT;
+ALTER TABLE shops ADD COLUMN IF NOT EXISTS employee_phone TEXT;
 
 -- PLACE LIBÉRÉE : l'écran a quitté le commerce (démission, remplacement). La fiche
 -- reste (historique, ventes) mais elle ne compte plus une place : sans cela, le quota

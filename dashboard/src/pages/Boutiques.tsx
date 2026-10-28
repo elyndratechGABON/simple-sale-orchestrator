@@ -16,7 +16,7 @@ import {
   type ShopDetail,
   type DeleteRequest,
 } from "../api";
-import { fmtDate, fmtDateTime, fmtFcfa, statusBadge } from "../utils";
+import { fmtDateTime, fmtFcfa, statusBadge } from "../utils";
 import {
   AlertIcon,
   BanknoteIcon,
@@ -27,7 +27,6 @@ import {
   SmartphoneIcon,
   XIcon,
 } from "../icons";
-import { DataTable } from "../components/ui/DataTable";
 import { Modal } from "../components/ui/Modal";
 import { OnlineDot } from "../components/ui/OnlineDot";
 
@@ -120,7 +119,18 @@ export function Boutiques({ onSelect }: Props) {
     return shops.filter((s) => {
       if (filtre !== "all" && categorie(s) !== filtre) return false;
       if (!q) return true;
-      return [s.store_name, s.owner_name, s.account_name, s.phone, s.location]
+      // La recherche porte aussi sur les EMPLOYÉS : « Jean » ou « 077… » doivent
+      // retrouver la boutique — c'est le nom de la personne, pas le device_id.
+      const employes = s.employes ?? [];
+      return [
+        s.store_name,
+        s.owner_name,
+        s.account_name,
+        s.phone,
+        s.location,
+        ...employes.map((e) => e.nom),
+        ...employes.map((e) => e.telephone),
+      ]
         .filter(Boolean)
         .some((v) => String(v).toLowerCase().includes(q));
     });
@@ -445,16 +455,14 @@ export function Boutiques({ onSelect }: Props) {
       </div>
 
       {!ready ? (
-        <div className="table-wrap">
-          <table>
-            <tbody>
-              {Array.from({ length: 3 }).map((_, i) => (
-                <tr key={i} className="skeleton-row">
-                  <td colSpan={6}><div className="skeleton" style={{ height: 20 }} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="boutiques-grid">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div className="boutique-card" key={i}>
+              <div className="skeleton" style={{ height: 22, width: "55%" }} />
+              <div className="skeleton" style={{ height: 14, marginTop: 10 }} />
+              <div className="skeleton" style={{ height: 60, marginTop: 14 }} />
+            </div>
+          ))}
         </div>
       ) : shops.length === 0 ? (
         <div className="empty">
@@ -462,91 +470,110 @@ export function Boutiques({ onSelect }: Props) {
           <strong>Aucune boutique</strong>
           Les caisses apparaissent ici après leur premier lancement.
         </div>
+      ) : visibles.length === 0 ? (
+        <div className="empty">
+          <InboxIcon size={28} />
+          <strong>Aucune boutique ne correspond</strong>
+          Change de filtre ou efface la recherche.
+        </div>
       ) : (
-        <DataTable
-          columns={[
-            {
-              key: "store_name",
-              label: "Boutique",
-              render: (s: ShopDetail) => (
-                <div className="cell-store">
-                  <strong>{s.store_name || "—"}</strong>
-                  <div className="meta">{s.owner_name}</div>
+        /* Une CARTE par boutique : l'enseigne, le patron, et la liste des EMPLOYÉS
+           (nom + numéro) plutôt qu'une ligne par écran technique. */
+        <div className="boutiques-grid">
+          {visibles.map((s: ShopDetail) => {
+            const employes = s.employes ?? [];
+            return (
+              <article className="boutique-card" key={s.account_id ?? s.id}>
+                <header className="bc-head">
+                  <div className="bc-titre">
+                    <strong>{s.store_name || "—"}</strong>
+                    <span className="muted">{s.owner_name || "—"}</span>
+                  </div>
+                  <div className="bc-meta">
+                    <span className="bc-compte">
+                      {s.nombre_employes ?? employes.length} employé
+                      {(s.nombre_employes ?? employes.length) > 1 ? "s" : ""}
+                    </span>
+                    {statusBadge(s.status)}
+                  </div>
+                </header>
+
+                <div className="bc-sous-titre">
+                  {s.phone ? <span className="mono">{s.phone}</span> : null}
+                  {s.plan_name ? <span>{s.plan_name}</span> : null}
+                  {s.account_max_devices != null ? (
+                    <span className="mono">
+                      {s.account_device_count}/{s.account_max_devices} écrans
+                    </span>
+                  ) : null}
+                  <span className="muted">Sync {fmtDateTime(s.last_sync_at)}</span>
                 </div>
-              ),
-            },
-            {
-              key: "account_name",
-              label: "Compte",
-              render: (s: ShopDetail) => <span>{s.account_name ?? "—"}</span>,
-            },
-            {
-              key: "account_tier",
-              label: "Abonnement",
-              render: (s: ShopDetail) =>
-                s.account_max_devices != null ? (
-                  <span className="mono">
-                    {s.account_device_count}/{s.account_max_devices} écrans
-                    {s.plan_name ? (
-                      <span className="muted"> · {s.plan_name}</span>
-                    ) : s.plan_price_fcfa != null ? (
-                      <span className="muted"> · {fmtFcfa(s.plan_price_fcfa)}</span>
-                    ) : null}
-                  </span>
-                ) : (
-                  "—"
-                ),
-            },
-            {
-              key: "devices",
-              label: "Écrans",
-              render: (s: ShopDetail) => (
-                <div className="space-y-1">
-                  {(s.devices ?? [{ device_id: s.device_id, store_name: s.store_name, online: s.online, last_sync_at: s.last_sync_at }]).map((d) => (
-                    <div key={d.device_id} className="flex items-center gap-1.5">
-                      <OnlineDot online={d.online} />
+
+                <ul className="bc-employes">
+                  {employes.map((e) => (
+                    <li key={e.device_id}>
+                      <OnlineDot online={e.en_ligne} />
+                      <span className="bc-emp-nom">
+                        {e.nom ?? <span className="muted">Écran non déclaré</span>}
+                      </span>
+                      <span className="bc-emp-tel mono">
+                        {e.telephone ?? <span className="muted">numéro non déclaré</span>}
+                      </span>
+                      <span className={`presence ${e.en_ligne ? "on" : ""}`}>
+                        <span className={`dot ${e.en_ligne ? "on" : "off"}`} />
+                        {e.en_ligne ? "En ligne" : "Hors ligne"}
+                      </span>
                       <button
-                        className="mono underline-offset-2 hover:underline"
-                        onClick={() => onSelect(d.device_id)}
-                        title={`Détail de l'écran ${d.store_name}`}
+                        className="btn btn-ghost btn-xs"
+                        onClick={() => onSelect(e.device_id)}
+                        title="Voir la fiche de cet écran"
                       >
-                        {d.store_name || d.device_id.slice(0, 8)}
+                        Fiche
                       </button>
                       <button
-                        className="btn btn-ghost btn-xs text-destructive hover:text-destructive opacity-0 group-hover:opacity-100"
-                        onClick={() => handleDeleteDevice(d.device_id, d.store_name || d.device_id.slice(0, 8))}
-                        disabled={deleting === d.device_id || busy}
+                        className="btn btn-ghost btn-xs text-destructive hover:text-destructive"
+                        onClick={() => handleDeleteDevice(e.device_id, e.nom ?? e.device_id.slice(0, 8))}
+                        disabled={deleting === e.device_id || busy}
                         title="Supprimer cet écran"
-                        aria-label={`Supprimer l'écran ${d.store_name || d.device_id.slice(0, 8)}`}
+                        aria-label={`Supprimer l'écran ${e.nom ?? e.device_id.slice(0, 8)}`}
                       >
-                        {deleting === d.device_id ? "⏳" : "🗑"}
+                        {deleting === e.device_id ? "⏳" : "🗑"}
                       </button>
-                    </div>
+                    </li>
                   ))}
-                </div>
-              ),
-            },
-            { key: "status", label: "Statut", render: (s: ShopDetail) => statusBadge(s.status) },
-            {
-              key: "expiry_date",
-              label: "Fin d&apos;abonnement",
-              render: (s: ShopDetail) => <span className="mono">{fmtDate(s.expiry_date)}</span>,
-            },
-            {
-              key: "last_sync_at",
-              label: "Dernière sync",
-              render: (s: ShopDetail) => <span className="mono">{fmtDateTime(s.last_sync_at)}</span>,
-            },
-            {
-              key: "actions",
-              label: "",
-              render: (s: ShopDetail) => (
-                <div className="flex items-center gap-1.5">
-                  <button className="btn btn-sm" onClick={() => onSelect(s.device_id)}>
-                    Détails
-                  </button>
+                  {employes.length === 0 && (
+                    <li className="muted">Aucun écran actif sur cette boutique.</li>
+                  )}
+                </ul>
+
+                <footer className="bc-pied">
                   {s.account_id != null && (
                     <>
+                      {/* Le [+] du cahier des charges : ouvrir une place de plus pour un
+                          employé (le prix et la durée restent libres). */}
+                      <button
+                        className="btn btn-sm btn-primary"
+                        onClick={() => {
+                          setCustomPour(s);
+                          setCustomDevices("1");
+                          setCustomPrix("");
+                          setCustomJours("");
+                        }}
+                        disabled={busy}
+                        title="Ajouter un employé (une place de plus)"
+                      >
+                        <PlusIcon size={13} />
+                        Ajouter un employé
+                      </button>
+                      <button
+                        className="btn btn-sm"
+                        onClick={() => setPlanPour(s)}
+                        disabled={busy}
+                        title="Changer l'abonnement (nombre de places)"
+                      >
+                        <BanknoteIcon size={13} />
+                        Gérer l&apos;abonnement
+                      </button>
                       <button
                         className="btn btn-sm btn-ghost"
                         onClick={() => {
@@ -558,33 +585,6 @@ export function Boutiques({ onSelect }: Props) {
                       >
                         <SmartphoneIcon size={13} />
                         Accès
-                      </button>
-                      <button
-                        className="btn btn-sm btn-ghost"
-                        onClick={() => setPlanPour(s)}
-                        disabled={busy}
-                        title="Changer l'abonnement (nombre de places)"
-                      >
-                        <BanknoteIcon size={13} />
-                        Abonnement
-                      </button>
-                      {/* Le [+] du cahier des charges : ajouter un écran (une place de
-                          plus) à cette boutique — même modal que l'option sur-mesure,
-                          le prix et la durée restent libres. */}
-                      <button
-                        className="btn btn-sm btn-primary"
-                        onClick={() => {
-                          setCustomPour(s);
-                          setCustomDevices("1");
-                          setCustomPrix("");
-                          setCustomJours("");
-                        }}
-                        disabled={busy}
-                        title="Ajouter un écran (place supplémentaire) à cette boutique"
-                        aria-label={`Ajouter un écran à ${s.account_name || s.store_name}`}
-                      >
-                        <PlusIcon size={13} />
-                        Ajouter un écran
                       </button>
                       <button
                         className="btn btn-sm btn-ghost"
@@ -620,30 +620,26 @@ export function Boutiques({ onSelect }: Props) {
                           </>
                         )}
                       </button>
+                      <button
+                        className="btn btn-sm btn-ghost text-destructive hover:text-destructive"
+                        onClick={() => handleDeleteAccount(s.account_id!, s.account_name || `compte #${s.account_id}`)}
+                        disabled={deleting === `account-${s.account_id}` || busy}
+                        title="Supprimer toute la boutique (compte + tous ses écrans)"
+                      >
+                        {deleting === `account-${s.account_id}` ? "⏳" : "🗑"}
+                      </button>
                     </>
                   )}
-                  {s.account_id != null && (
-                    <button
-                      className="btn btn-sm btn-ghost text-destructive hover:text-destructive"
-                      onClick={() => handleDeleteAccount(s.account_id!, s.account_name || `compte #${s.account_id}`)}
-                      disabled={deleting === `account-${s.account_id}` || busy}
-                      title="Supprimer toute la boutique (compte + tous ses écrans)"
-                    >
-                      {deleting === `account-${s.account_id}` ? "⏳" : "🗑"}
+                  {s.account_id == null && (
+                    <button className="btn btn-sm" onClick={() => onSelect(s.device_id)}>
+                      Détails de l&apos;écran
                     </button>
                   )}
-                </div>
-              ),
-            },
-          ]}
-          data={visibles}
-          keyFn={(s) => s.device_id}
-          emptyMessage={
-            shops.length === 0
-              ? "Aucune boutique."
-              : "Aucune boutique ne correspond à ce filtre."
-          }
-        />
+                </footer>
+              </article>
+            );
+          })}
+        </div>
       )}
 
       {/* Gérer les accès : les écrans de la boutique, et le rattachement d'un écran
