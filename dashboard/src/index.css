@@ -691,6 +691,23 @@ button {
   flex: 0 0 auto;
 }
 
+/* Un écran en attente de bénédiction : visible, mais ce n'est PAS un employé. */
+.badge.attente {
+  margin-left: 8px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-radius: 999px;
+  padding: 1px 7px;
+  vertical-align: middle;
+}
+
+.bc-employes li.non-confirme {
+  opacity: 0.6;
+}
+
 /* L'étiquette du poste du PATRON (son écran porte le nom du propriétaire). */
 .badge.patron {
   margin-left: 8px;

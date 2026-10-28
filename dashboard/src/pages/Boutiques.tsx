@@ -511,12 +511,17 @@ export function Boutiques({ onSelect }: Props) {
 
                 <ul className="bc-employes">
                   {employes.map((e) => (
-                    <li key={e.device_id}>
+                    <li key={e.device_id} className={e.confirme === false ? "non-confirme" : undefined}>
                       <OnlineDot online={e.en_ligne} />
                       <span className="bc-emp-nom">
                         {e.nom ?? <span className="muted">Écran non déclaré</span>}
                         {e.est_proprietaire && e.nom ? (
                           <span className="badge patron">patron</span>
+                        ) : null}
+                        {e.confirme === false ? (
+                          <span className="badge attente" title="Appairage jamais confirmé — ne compte pas comme employé">
+                            non confirmé
+                          </span>
                         ) : null}
                       </span>
                       <span className="bc-emp-tel mono">

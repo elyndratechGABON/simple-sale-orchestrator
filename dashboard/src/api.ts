@@ -217,6 +217,8 @@ export interface Employe {
   nom: string | null;
   telephone: string | null;
   est_proprietaire: boolean;
+  /** false = appairage jamais validé (tentative) : ce poste ne compte pas. */
+  confirme?: boolean;
   en_ligne: boolean;
   statut: string;
   derniere_sync: number | null;

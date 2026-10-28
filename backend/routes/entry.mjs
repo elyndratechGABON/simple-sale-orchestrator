@@ -336,6 +336,30 @@ router.post("/api/v1/handshake", async (req, res) => {
     );
     shop = await byId(shop.id);
   } else {
+    // Un écran qui se présente en ATTENTE DE BÉNÉDICTION (ni mot de passe, ni bénédiction
+    // connue) laisse une fiche sans empreinte. Si la MÊME boutique a déjà une telle
+    // fiche en attente, c'est le même écran qui se ré-annonce après une réinitialisation
+    // d'identité : on libère l'ancienne. Sans cela, chaque réinitialisation laissait
+    // un écran fantôme compter comme employé et occuper une place pendant 7 jours.
+    if (pendingBlessing) {
+      const twins = await db.all(
+        `SELECT id, device_id FROM shops
+          WHERE released_at IS NULL
+            AND device_fingerprint IS NULL
+            AND coalesce(employee_name, '') = ''
+            AND coalesce(owner_name, '') = ''
+            AND lower(trim(coalesce(store_name, ''))) = lower(trim($1))
+            AND coalesce(phone, '') = coalesce($2, '')`,
+        optStr(body.store_name) ?? "",
+        optStr(body.phone),
+      );
+      for (const t of twins) {
+        await db.run(`UPDATE shops SET released_at = $1 WHERE id = $2`, now, t.id);
+        console.log(
+          `[${new Date().toISOString()}] DOUBLON D'APPAIRAGE : libération de l'attente de bénédiction ${t.device_id} (supersédée par ${device_id})`,
+        );
+      }
+    }
     await db.run(
       `INSERT INTO shops
          (device_id, owner_name, store_name, phone, location, registration_date,
@@ -455,22 +479,32 @@ router.post("/api/v1/handshake", async (req, res) => {
   // depuis plus de 7 jours. Cela débloque les nouveaux appareils quand un ancien employé
   // est parti sans libérer la place (network error, etc.).
   const GHOST_DEVICE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+  // Un écran JAMAIS CONFIRMÉ (ni béni, donc sans empreinte, et sans nom déclaré) n'a
+  // jamais prouvé qu'il existe : c'est une TENTATIVE d'appairage restée en attente du
+  // propriétaire — souvent l'écran qui s'est ré-annoncé après une réinitialisation
+  // d'identité, ce qui créait un doublon fantôme. On le libère au bout d'une heure au lieu
+  // de sept jours : sinon il comptait comme employé et occupait une place.
+  const PENDING_DEVICE_TTL_MS = 60 * 60 * 1000;
   const ghostDevices = await db.all(
-    `SELECT id, device_id, registration_date, last_sync_at FROM shops WHERE account_id = $1 AND released_at IS NULL`,
+    `SELECT id, device_id, registration_date, last_sync_at, device_fingerprint,
+            employee_name, owner_name
+       FROM shops WHERE account_id = $1 AND released_at IS NULL`,
     account.id,
   );
   for (const d of ghostDevices) {
     // Considérer un appareil "ghost" s'il n'a pas de last_sync_at récent (> 7 jours)
     // ou s'il n'a jamais syncé (last_sync_at undefined).
     const lastSync = d.last_sync_at ?? d.registration_date;
-    if (now - lastSync > GHOST_DEVICE_TTL_MS) {
+    const jamaisConfirme = !d.device_fingerprint && !d.employee_name && !d.owner_name;
+    const ttl = jamaisConfirme ? PENDING_DEVICE_TTL_MS : GHOST_DEVICE_TTL_MS;
+    if (now - lastSync > ttl) {
       await db.run(
         `UPDATE shops SET released_at = $1 WHERE id = $2`,
         now,
         d.id,
       );
       console.log(
-        `[${new Date().toISOString()}] AUTO-CLEANUP : libération ghost device ${d.device_id} du compte #${account.id} (inactif depuis ${((now - lastSync) / (24 * 60 * 60 * 1000)).toFixed(1)} j)`,
+        `[${new Date().toISOString()}] AUTO-CLEANUP : libération ${jamaisConfirme ? "écran jamais confirmé" : "ghost device"} ${d.device_id} du compte #${account.id} (inactif depuis ${((now - lastSync) / (60 * 1000)).toFixed(0)} min)`,
       );
     }
   }

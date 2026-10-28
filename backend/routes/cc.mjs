@@ -237,10 +237,16 @@ router.get("/api/v1/admin/shops-detail", requireAdmin, async (req, res) => {
         telephone: d.employee_phone || null,
         // Le propriétaire de la boutique n'est pas un « employé » : c'est le compte.
         est_proprietaire: !d.employee_name,
+        // Un écran CONFIRMÉ s'est fait connaître : il a été béni (empreinte) ou
+        // déclaré par un nom. Une fiche sans empreinte ET sans nom n'est qu'une
+        // TENTATIVE d'appairage restée en attente : elle ne compte pas comme
+        // employé (ni comme place), sinon la console affichait un poste fantôme.
+        confirme: !!(d.device_fingerprint || d.employee_name || d.owner_name),
         en_ligne: !!(d.last_sync_at && now - d.last_sync_at < ONLINE_WINDOW_MS),
         statut: d.suspended_at ? "suspended" : computeStatus(d),
         derniere_sync: d.last_sync_at ?? null,
       }));
+      const confirmes = employes.filter((e) => e.confirme);
       return {
         id: premier.id,
         device_id: premier.device_id,
@@ -268,8 +274,8 @@ router.get("/api/v1/admin/shops-detail", requireAdmin, async (req, res) => {
         status: resolvedAccount ? computeAccountStatus(resolvedAccount) : computeStatus(premier),
         payments: devices.reduce((n, d) => n + Number(d.payments || 0), 0),
         online: devices.some((d) => d.last_sync_at && now - d.last_sync_at < ONLINE_WINDOW_MS),
-        // Combien de personnes utilisent ce commerce (écrans vivants) et QUI.
-        nombre_employes: employes.length,
+        // Combien de personnes utilisent ce commerce (écrans CONFIRMÉS) et QUI.
+        nombre_employes: confirmes.length,
         employes,
         // Les écrans du commerce : c'est ici qu'un employé apparaît, comme poste.
         // Les écrans dont la place a été LIBÉRÉE (départ) n'y sont plus : ils ne
