@@ -229,7 +229,11 @@ router.get("/api/v1/admin/shops-detail", requireAdmin, async (req, res) => {
       // déclaré (le propriétaire, ou un ancien poste) reste identifié par son device_id.
       const employes = actifs.map((d) => ({
         device_id: d.device_id,
-        nom: d.employee_name || null,
+        // Le NOM affiché : celui que l'écran a déclaré (employé), sinon celui du
+        // PATRON — c'est le nom de l'écran du propriétaire, qui n'a pas d'employé
+        // à déclarer. Un employé sans nom déclaré reste « non déclaré » : on ne
+        // devine jamais à la place de quelqu'un.
+        nom: d.employee_name || d.owner_name || null,
         telephone: d.employee_phone || null,
         // Le propriétaire de la boutique n'est pas un « employé » : c'est le compte.
         est_proprietaire: !d.employee_name,

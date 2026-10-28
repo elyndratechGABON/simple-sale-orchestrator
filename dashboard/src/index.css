@@ -691,6 +691,20 @@ button {
   flex: 0 0 auto;
 }
 
+/* L'étiquette du poste du PATRON (son écran porte le nom du propriétaire). */
+.badge.patron {
+  margin-left: 8px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  background: var(--bg, #f3f4f6);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 7px;
+  vertical-align: middle;
+}
+
 .bc-pied {
   display: flex;
   flex-wrap: wrap;

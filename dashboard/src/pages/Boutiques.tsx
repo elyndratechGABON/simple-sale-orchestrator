@@ -515,6 +515,9 @@ export function Boutiques({ onSelect }: Props) {
                       <OnlineDot online={e.en_ligne} />
                       <span className="bc-emp-nom">
                         {e.nom ?? <span className="muted">Écran non déclaré</span>}
+                        {e.est_proprietaire && e.nom ? (
+                          <span className="badge patron">patron</span>
+                        ) : null}
                       </span>
                       <span className="bc-emp-tel mono">
                         {e.telephone ?? <span className="muted">numéro non déclaré</span>}
