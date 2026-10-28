@@ -41,6 +41,8 @@ import {
   deviceBlessing,
   deviceBlessingByDevice,
   deviceBlessingsForAccount,
+  upsertDeviceCredential,
+  deviceCredentialForDevice,
   canReleaseSeat,
   releaseShopSeat,
   accountAnchorDevice,
@@ -93,9 +95,15 @@ router.post("/api/v1/handshake", async (req, res) => {
     // tion) → passe. Les fiches au compte différent restent soumises à la règle
     // du fondateur (cf. « 0. ») : un mur correct n'est pas un mur systématique.
     if (presentedAccount && !clash.account_id) {
+      // Fiche SANS compte (l'équipe d'origine est perdue) : l'écran qui réclame
+      // l'empreinte la RÉCUPÈRE — on l'attache au compte présenté, on prend son
+      // device_id ET on la RÉACTIVE si elle avait été libérée. Libérer l'empreinte
+      // et laisser la fiche derrière créait un trou : l'écran revenait dans une
+      // NOUVELLE fiche et l'ancienne restait orpheline pour toujours.
       await db.run(
-        "UPDATE shops SET account_id = $1, device_fingerprint = NULL, updated_at = $2 WHERE device_id = $3",
+        "UPDATE shops SET account_id = $1, device_id = $2, released_at = NULL, updated_at = $3 WHERE device_id = $4",
         presentedAccount.id,
+        deviceId,
         Date.now(),
         clash.device_id,
       );
@@ -103,12 +111,10 @@ router.post("/api/v1/handshake", async (req, res) => {
     }
     if (presentedAccount && clash.account_id === presentedAccount.id) {
       // MÊME commerce, MÊME appareil physique : l'empreinte est la sienne, il
-      // RÉATTRIBUE sa fiche. Sans cela, une réinstallation (ou une purge de la fiche
-      // locale) créait un écran FANTÔME — deux lignes pour un seul téléphone, la
-      // place de l'ancien écran restant occupée pour toujours — et le fondateur du
-      // commerce restait muré sur sa propre boutique.
+      // RÉATTRIBUE sa fiche — et la RÉACTIVE si elle avait été LIBÉRÉE (il revient :
+      // sa place lui revient, pas de nouvelle fiche, pas de trou).
       await db.run(
-        "UPDATE shops SET device_id = $1, updated_at = $2 WHERE device_id = $3",
+        "UPDATE shops SET device_id = $1, released_at = NULL, updated_at = $2 WHERE device_id = $3",
         deviceId,
         Date.now(),
         clash.device_id,
@@ -161,6 +167,9 @@ router.post("/api/v1/handshake", async (req, res) => {
       // compte fantôme (aucune boutique, invisible au tableau de bord).
       const blocked = await fingerprintBlock(device_id, device_fingerprint, null);
       if (blocked) return res.status(blocked.status).json(blocked.payload);
+      // Même relecture après le contrôle : si l'empreinte a été réattribuée, la
+      // fiche existe désormais pour cet écran (sinon l'INSERT violerait l'index UNIQUE).
+      shop = await byDeviceId(device_id);
       // Comptes créés hors ligne puis réconciliés ici : le premier écran à joindre le
       // serveur enregistre le compte, les suivants se rattachent avec les mêmes infos.
       const tier = PRICE_TIERS[0] ?? { price: PRICE_PER_MONTH_FCFA, devices: 1 };
@@ -241,7 +250,14 @@ router.post("/api/v1/handshake", async (req, res) => {
       const ownerAcc = await accountById(blessing.account_id);
       if (ownerAcc) {
         account = await resolveAccount(ownerAcc);
-        await upsertDeviceCredential(device_id, account.id);
+        // Le secret par-appareil n'est CRÉÉ qu'une fois. Le re-hacher à chaque
+        // handshake coûtait un argon2 (timeout côté plateforme) ; et l'appel était
+        // resté ici sans son import — ReferenceError, donc AUCUNE réponse au
+        // handshake : l'écran restait bloqué « en attente de bénédiction » pour
+        // toujours, et le patron le voyait comme un poste fantôme.
+        if (!(await deviceCredentialForDevice(device_id))) {
+          await upsertDeviceCredential(device_id, account.id);
+        }
         pendingBlessing = false;
         console.log(
           `[${new Date().toISOString()}] LIEN accepté : écran ${device_id} rattaché au compte « ${account.name} » (#${account.id})`,
@@ -262,6 +278,10 @@ router.post("/api/v1/handshake", async (req, res) => {
   if (!pendingBlessing) {
     const blocked = await fingerprintBlock(device_id, device_fingerprint, account);
     if (blocked) return res.status(blocked.status).json(blocked.payload);
+    // La réattribution vient peut-être de faire de cette fiche CELLE de cet écran
+    // (l'empreinte a été récupérée). `shop` a été lu AVANT : sans cette relecture,
+    // le code partait en INSERT et violait l'index UNIQUE sur device_id.
+    shop = await byDeviceId(device_id);
   }
 
   // 2. Fiche boutique : mise à jour douce des champs fournis, création si inconnue
@@ -295,6 +315,26 @@ router.post("/api/v1/handshake", async (req, res) => {
 
   const projectCfg = await projectConfig(app_origin);
 
+  // L'empreinte qu'on va écrire ne doit pas être déjà portée par une AUTRE fiche
+  // (index UNIQUE) : l'écrire quand même ferait échouer le handshake en 500, et un
+  // écran qui ne peut plus se présenter apparaît comme un poste MORT dans la console.
+  // On la laisse donc de côté : l'empreinte sert à reconnaître le matériel, pas à
+  // faire échouer la synchronisation.
+  let fingerprintAWrite = pendingBlessing ? null : device_fingerprint;
+  if (fingerprintAWrite) {
+    const dejaPortee = await db.get(
+      "SELECT device_id FROM shops WHERE device_fingerprint = $1 AND device_id <> $2",
+      fingerprintAWrite,
+      device_id,
+    );
+    if (dejaPortee) {
+      console.warn(
+        `[${new Date().toISOString()}] EMPREINTE déjà portée par ${dejaPortee.device_id} — on ne la réécrit pas sur ${device_id}`,
+      );
+      fingerprintAWrite = null;
+    }
+  }
+
   if (shop) {
     await db.run(
       `UPDATE shops SET
@@ -319,8 +359,9 @@ router.post("/api/v1/handshake", async (req, res) => {
       optStr(body.location),
       app_version_used,
       // COALESCE : une attente de bénédiction ne pose pas d'empreinte disputée
-      // (cf. INSERT ci-dessous) — la fiche existante garde la sienne.
-      pendingBlessing ? null : device_fingerprint,
+      // (cf. INSERT ci-dessous) — la fiche existante garde la sienne. Et si l'empreinte
+      // est déjà portée ailleurs, on ne l'écrit pas (cf. `fingerprintAWrite`).
+      fingerprintAWrite,
       app_origin,
       now,
       shop.id,
@@ -381,7 +422,7 @@ router.post("/api/v1/handshake", async (req, res) => {
       // l'index UNIQUE rendrait l'insertion impossible (500) — l'empreinte
       // sera posée au prochain handshake APRÈS la bénédiction, au moment où
       // le mur tranche le conflit via le compte désormais résolu.
-      pendingBlessing ? null : device_fingerprint,
+      fingerprintAWrite,
       // La clé publique de l'appareil (voir l'UPDATE ci-dessus).
       optStr(body.device_public_key),
       // Le nom et le numéro de l'écran : saisis par l'employé au scan du QR et

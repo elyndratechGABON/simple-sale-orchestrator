@@ -255,8 +255,13 @@ test("une attente de bénédiction ne frappe ni le mur ni l'index UNIQUE", () =>
   );
   assert.match(
     entry,
-    /pendingBlessing \? null : device_fingerprint/,
+    /let fingerprintAWrite = pendingBlessing \? null : device_fingerprint/,
     "une fiche en attente ne pose pas d'empreinte disputée",
+  );
+  assert.match(
+    entry,
+    /if \(dejaPortee\) \{[\s\S]*?fingerprintAWrite = null/,
+    "une empreinte déjà portée par une autre fiche ne doit jamais être réécrite",
   );
 });
 
@@ -267,7 +272,9 @@ test("une fiche migrée (account_id NULL) rejoint le compte présenté au lieu d
   const block = entry.slice(start, entry.indexOf("\n  };", start));
   // Le 409 permanent sur une fiche de migration enfonce l'écran dans un mur
   // sans issue : avec un compte présenté et authentifié, la fiche est
-  // rattachée au compte présenté et son poste d'empreinte est libéré.
+  // RAPPORTÉE au compte présenté — et RÉACTIVÉE si elle avait été libérée.
+  // Elle n'est plus « abandonnée » derrière (le=device_id + empreinte rendue) :
+  // l'écran reprenait une NOUVELLE fiche et l'ancienne restait orpheline.
   assert.match(
     block,
     /presentedAccount && !clash\.account_id/,
@@ -275,8 +282,8 @@ test("une fiche migrée (account_id NULL) rejoint le compte présenté au lieu d
   );
   assert.match(
     block,
-    /SET account_id = \$1, device_fingerprint = NULL/,
-    "le rattachement doit rattacher le compte ET libérer l'empreinte en un UPDATE",
+    /SET account_id = \$1, device_id = \$2, released_at = NULL, updated_at = \$3 WHERE device_id = \$4/,
+    "le rattachement doit reprendre la fiche ET la réactiver en un seul UPDATE",
   );
 });
 

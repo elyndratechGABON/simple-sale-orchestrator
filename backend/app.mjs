@@ -63,6 +63,43 @@ app.use(ccRouter); // Control Center
 app.use(mirrorRouter); // POST /api/v1/mirror/{ops,push} — copie locale chez le commerçant
 app.use(restoreRouter); // POST/GET /api/v1/restore — restauration depuis l'archive chiffrée
 
+// ── Filet de sécurité : une erreur ne doit JAMAIS laisser la requête ouverte ─────
+// Express 4 n'attrape pas le rejet d'un handler `async` : la promesse rejetée
+// disparaît, aucune réponse n'est envoyée, et la requête reste ouverte jusqu'au
+// timeout de la plateforme (60 s sur Vercel). Du côté de la caisse, cela ressemble à
+// un écran « mort » ; du côté de l'administrateur, à une boutique fantôme.
+// On enveloppe donc chaque handler : toute erreur devient un 500 explicite.
+function asyncSafe(router) {
+  for (const layer of router.stack ?? []) {
+    if (!layer.route) continue;
+    for (const s of layer.route.stack) {
+      const fn = s.handle;
+      if (typeof fn !== "function" || fn.length >= 4) continue; // middleware d'erreur
+      s.handle = (req, res, next) => {
+        try {
+          const out = fn(req, res, next);
+          if (out && typeof out.catch === "function") out.catch(next);
+        } catch (err) {
+          next(err);
+        }
+      };
+    }
+  }
+  return router;
+}
+for (const r of [authRouter, entryRouter, adminRouter, ccRouter, mirrorRouter, restoreRouter]) {
+  asyncSafe(r);
+}
+
+// Dernier rempart : toute erreur non rattrapée devient une réponse JSON lisible.
+app.use((err, req, res, _next) => {
+  console.error(
+    `[${new Date().toISOString()}] ERREUR ${req.method} ${req.originalUrl} : ${err?.stack ?? err}`,
+  );
+  if (res.headersSent) return;
+  res.status(500).json({ error: "Erreur interne — réessaie dans un instant." });
+});
+
 // ── Drainer SANS attente (cron Vercel) ──────────────────────────────────────────
 // /api/v1/drain est appelé par le cron de vercel.json : il déclenche un cycle de copie
 // du relais vers l'archive Neon et répond immédiatement (le travail continue en arrière-
