@@ -8,6 +8,8 @@ import {
   deleteAccount,
   sendAccountCommand,
   setAccountPlan,
+  setAccountCustom,
+  setAccountPassword,
   activateAccount,
   attachDeviceToAccount,
   revokeDevice,
@@ -20,6 +22,7 @@ import {
   BanknoteIcon,
   InboxIcon,
   LockIcon,
+  PlusIcon,
   SendIcon,
   SmartphoneIcon,
   XIcon,
@@ -71,6 +74,13 @@ export function Boutiques({ onSelect }: Props) {
   const [messageTexte, setMessageTexte] = useState("");
   const [accesPour, setAccesPour] = useState<ShopDetail | null>(null);
   const [deviceIdRattache, setDeviceIdRattache] = useState("");
+  // Option SUR-MESURE : +N appareils / prix libre / durée — au-delà des paliers.
+  const [customPour, setCustomPour] = useState<ShopDetail | null>(null);
+  const [customDevices, setCustomDevices] = useState("");
+  const [customPrix, setCustomPrix] = useState("");
+  const [customJours, setCustomJours] = useState("");
+  // Changement de mot de passe du compte (support : le patron l'a perdu).
+  const [nouveauMotDePasse, setNouveauMotDePasse] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -292,6 +302,59 @@ export function Boutiques({ onSelect }: Props) {
     }
   };
 
+  /** OPTION SUR-MESURE : +N appareils et/ou un prix libre et/ou des jours — pour les
+   *  clients généreux, au-delà des paliers. Contrairement au changement de palier,
+   *  les appareils s'ADDITIONNENT au quota actuel au lieu de l'écraser. */
+  const handleCustom = async () => {
+    if (!customPour?.account_id) return;
+    const extra = Math.max(0, Math.round(Number(customDevices) || 0));
+    const prix = Math.max(0, Math.round(Number(customPrix) || 0));
+    const jours = Math.max(0, Math.round(Number(customJours) || 0));
+    if (extra === 0 && prix === 0 && jours === 0) {
+      setError("Renseigne au moins : +appareils, un prix ou une durée.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await setAccountCustom(customPour.account_id, {
+        extra_devices: extra,
+        price_fcfa: prix,
+        days: jours,
+        reason: "Option sur-mesure depuis la console",
+      });
+      const morceaux = [
+        extra ? `+${extra} écran(s)` : null,
+        prix ? `${prix.toLocaleString("fr-FR")} F` : null,
+        jours ? `+${jours} j` : null,
+      ].filter(Boolean).join(" · ");
+      setNotice(`Option sur-mesure appliquée à « ${customPour.account_name || customPour.store_name} » : ${morceaux}.`);
+      setCustomPour(null);
+      setCustomDevices("");
+      setCustomPrix("");
+      setCustomJours("");
+      await rafraichir();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erreur.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Changer le mot de passe du COMPTE (le patron s'est trompé / l'a perdu). */
+  const handleChangePassword = async () => {
+    if (!accesPour?.account_id || nouveauMotDePasse.trim().length < 6) return;
+    setBusy(true);
+    try {
+      await setAccountPassword(accesPour.account_id, nouveauMotDePasse.trim());
+      setNotice(`Mot de passe de « ${accesPour.account_name || accesPour.store_name} » changé.`);
+      setNouveauMotDePasse("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erreur.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <>
       {error && (
@@ -491,7 +554,7 @@ export function Boutiques({ onSelect }: Props) {
                           setDeviceIdRattache("");
                         }}
                         disabled={busy}
-                        title="Gérer les écrans de cette boutique"
+                        title="Gérer les accès : attacher, révoquer, changer le mot de passe"
                       >
                         <SmartphoneIcon size={13} />
                         Accès
@@ -504,6 +567,24 @@ export function Boutiques({ onSelect }: Props) {
                       >
                         <BanknoteIcon size={13} />
                         Abonnement
+                      </button>
+                      {/* Le [+] du cahier des charges : ajouter un écran (une place de
+                          plus) à cette boutique — même modal que l'option sur-mesure,
+                          le prix et la durée restent libres. */}
+                      <button
+                        className="btn btn-sm btn-primary"
+                        onClick={() => {
+                          setCustomPour(s);
+                          setCustomDevices("1");
+                          setCustomPrix("");
+                          setCustomJours("");
+                        }}
+                        disabled={busy}
+                        title="Ajouter un écran (place supplémentaire) à cette boutique"
+                        aria-label={`Ajouter un écran à ${s.account_name || s.store_name}`}
+                      >
+                        <PlusIcon size={13} />
+                        Ajouter un écran
                       </button>
                       <button
                         className="btn btn-sm btn-ghost"
@@ -628,6 +709,27 @@ export function Boutiques({ onSelect }: Props) {
             Fermer
           </button>
         </div>
+        <hr style={{ margin: "16px 0", border: "none", borderTop: "1px solid var(--border, #ddd)" }} />
+        {/* Le compte a SON mot de passe (celui du patron, distinct des codes écran) —
+            le support doit pouvoir le réinitialiser. */}
+        <label htmlFor="account-password">Changer le mot de passe du compte (min. 6 caractères)</label>
+        <input
+          id="account-password"
+          type="password"
+          value={nouveauMotDePasse}
+          onChange={(e) => setNouveauMotDePasse(e.target.value)}
+          placeholder="Nouveau mot de passe"
+          autoComplete="new-password"
+        />
+        <div className="row-actions" style={{ marginTop: 12 }}>
+          <button
+            className="btn"
+            onClick={() => void handleChangePassword()}
+            disabled={busy || nouveauMotDePasse.trim().length < 6}
+          >
+            Enregistrer le mot de passe
+          </button>
+        </div>
       </Modal>
 
       {/* Changer l'abonnement : le montant fixe le nombre de places. */}
@@ -656,6 +758,67 @@ export function Boutiques({ onSelect }: Props) {
               </span>
             </button>
           ))}
+        </div>
+      </Modal>
+
+      {/* Option SUR-MESURE / AJOUTER UN ÉCRAN : au-delà des paliers — pour les clients
+          généreux. Les appareils s'additionnent au quota ACTUEL (au lieu de l'écraser),
+          le prix et la durée sont libres. Laisser à 0 ce qu'on ne veut pas changer. */}
+      <Modal
+        open={customPour !== null}
+        onClose={() => setCustomPour(null)}
+        title={`Sur-mesure — ${customPour?.account_name || customPour?.store_name || ""}`}
+      >
+        <p className="modal-note">
+          On ADDITIONNE des appareils au quota actuel ({customPour?.account_device_count ?? 0}/
+          {customPour?.account_max_devices ?? "?"} en ce moment), on encaisse le prix qu&apos;on
+          veut, on prolonge d&apos;autant de jours. Laisser à 0 ce qui ne change pas.
+          <br />
+          L&apos;écran lui-même rejoint la boutique avec son code de pairing (ou via « Accès →
+          Rattacher ») : ici, on lui ouvre une place.
+        </p>
+        <label htmlFor="custom-devices">+ Appareils (places en plus)</label>
+        <input
+          id="custom-devices"
+          type="number"
+          min={0}
+          max={50}
+          value={customDevices}
+          onChange={(e) => setCustomDevices(e.target.value)}
+          placeholder="ex. 1"
+        />
+        <label htmlFor="custom-prix">Prix encaissé (FCFA — libre)</label>
+        <input
+          id="custom-prix"
+          type="number"
+          min={0}
+          step={500}
+          value={customPrix}
+          onChange={(e) => setCustomPrix(e.target.value)}
+          placeholder="ex. 15000"
+        />
+        <label htmlFor="custom-jours">Durée (jours de prolongation)</label>
+        <input
+          id="custom-jours"
+          type="number"
+          min={0}
+          max={3650}
+          value={customJours}
+          onChange={(e) => setCustomJours(e.target.value)}
+          placeholder="ex. 30"
+        />
+        <div className="row-actions" style={{ marginTop: 12 }}>
+          <button
+            className="btn btn-primary"
+            onClick={() => void handleCustom()}
+            disabled={busy || (!Number(customDevices) && !Number(customPrix) && !Number(customJours))}
+          >
+            Appliquer
+          </button>
+          <button className="btn btn-ghost" onClick={() => setCustomPour(null)}>
+            <XIcon size={13} />
+            Annuler
+          </button>
         </div>
       </Modal>
 

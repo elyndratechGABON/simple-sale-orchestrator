@@ -1,18 +1,13 @@
 import type { ReactElement, ReactNode } from "react";
-import { TrendingUpIcon, StoreIcon, InboxIcon, BanknoteIcon, ChartIcon, SmartphoneIcon, RefreshIcon, ActivityIcon, ShieldIcon, LogOutIcon, SunIcon, MoonIcon } from "../icons";
+import { TrendingUpIcon, StoreIcon, BanknoteIcon, GearIcon, LogOutIcon, SunIcon, MoonIcon } from "../icons";
 
-export type Page = "dashboard" | "clients" | "client" | "boutiques" | "boutique" | "abonnements" | "paiements" | "appareils" | "sync" | "activite" | "audit";
+export type Page = "tableau" | "boutiques" | "boutique" | "facturation" | "systeme";
 
 const NAV_ITEMS: { id: Page; label: string; icon: ReactElement; masterOnly?: boolean }[] = [
-  { id: "dashboard", label: "Tableau de bord", icon: <TrendingUpIcon size={18} /> },
-  { id: "clients", label: "Clients", icon: <StoreIcon size={18} /> },
+  { id: "tableau", label: "Tableau de bord", icon: <TrendingUpIcon size={18} /> },
   { id: "boutiques", label: "Boutiques", icon: <StoreIcon size={18} /> },
-  { id: "abonnements", label: "Abonnements", icon: <InboxIcon size={18} /> },
-  { id: "paiements", label: "Paiements", icon: <BanknoteIcon size={18} /> },
-  { id: "appareils", label: "Appareils", icon: <SmartphoneIcon size={18} /> },
-  { id: "sync", label: "Synchronisation", icon: <RefreshIcon size={18} /> },
-  { id: "activite", label: "Activité", icon: <ActivityIcon size={18} /> },
-  { id: "audit", label: "Audit", icon: <ShieldIcon size={18} />, masterOnly: true },
+  { id: "facturation", label: "Abonnements & paiements", icon: <BanknoteIcon size={18} /> },
+  { id: "systeme", label: "Système", icon: <GearIcon size={18} /> },
 ];
 
 export function Layout({
@@ -60,7 +55,7 @@ export function Layout({
             >
               {n.icon}
               {n.label}
-              {n.id === "abonnements" && pendingCount > 0 && (
+              {n.id === "facturation" && pendingCount > 0 && (
                 <span className="count">{pendingCount}</span>
               )}
             </button>

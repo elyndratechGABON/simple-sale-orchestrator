@@ -132,6 +132,18 @@ CREATE TABLE IF NOT EXISTS subscription_requests (
 CREATE INDEX IF NOT EXISTS idx_subscription_requests_account ON subscription_requests (account_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_subscription_requests_pending ON subscription_requests (status, created_at);
 
+CREATE TABLE IF NOT EXISTS payment_requests (
+  id           BIGSERIAL PRIMARY KEY,
+  shop_id      BIGINT NOT NULL REFERENCES shops(id),
+  sms_text     TEXT NOT NULL,
+  plan         TEXT NOT NULL DEFAULT '',
+  status       TEXT NOT NULL DEFAULT 'pending',
+  created_at   BIGINT NOT NULL,
+  validated_at BIGINT
+);
+CREATE INDEX IF NOT EXISTS idx_payment_requests_shop ON payment_requests (shop_id);
+CREATE INDEX IF NOT EXISTS idx_payment_requests_status ON payment_requests (status, created_at);
+
 CREATE TABLE IF NOT EXISTS delete_requests (
   id          BIGSERIAL PRIMARY KEY,
   device_id   TEXT NOT NULL,
@@ -146,48 +158,15 @@ CREATE TABLE IF NOT EXISTS delete_requests (
 CREATE INDEX IF NOT EXISTS idx_delete_requests_device ON delete_requests (device_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_delete_requests_pending ON delete_requests (status, created_at);
 
--- Panneau publicitaire
-CREATE TABLE IF NOT EXISTS ads (
-  id          BIGSERIAL PRIMARY KEY,
-  type        TEXT NOT NULL CHECK (type IN ('image', 'video', 'text')),
-  title       TEXT NOT NULL DEFAULT '',
-  content     TEXT NOT NULL DEFAULT '',
-  url         TEXT,
-  image_url   TEXT,
-  video_url   TEXT,
-  active      BIGINT NOT NULL DEFAULT 1,
-  created_at  BIGINT NOT NULL,
-  updated_at  BIGINT NOT NULL
-);
+-- Les tables « ads », « news », « notifications » et « catalogue_requests » ont été
+-- SUPPRIMÉES du schéma (2026-10-28) : aucune ligne de code ne les interrogeait et
+-- l'orchestrateur est désormais un outil de GESTION (parc + abonnements).
+--   - ads / news / notifications : jamais lues (la cloche de l'app cliente lit les
+--     admin_commands de type 'broadcast_message', PAS une table de notifications).
+--   - catalogue_requests : créée en v22, jamais requêtée.
+-- (Elles sont encore présentes dans migrations.sql — le schéma SQLite legacy, local.)
 
--- Actualités du Gabon
-CREATE TABLE IF NOT EXISTS news (
-  id          BIGSERIAL PRIMARY KEY,
-  title       TEXT NOT NULL,
-  body        TEXT NOT NULL DEFAULT '',
-  source      TEXT NOT NULL DEFAULT '',
-  image_url   TEXT,
-  video_url   TEXT,
-  active      BIGINT NOT NULL DEFAULT 1,
-  created_at  BIGINT NOT NULL,
-  updated_at  BIGINT NOT NULL
-);
-
--- Notifications ciblées
-CREATE TABLE IF NOT EXISTS notifications (
-  id          BIGSERIAL PRIMARY KEY,
-  account_id  BIGINT REFERENCES accounts(id),
-  type        TEXT NOT NULL CHECK (type IN ('text', 'image', 'video')),
-  title       TEXT NOT NULL,
-  body        TEXT NOT NULL DEFAULT '',
-  image_url   TEXT,
-  video_url   TEXT,
-  is_global   BIGINT NOT NULL DEFAULT 0,
-  sent_at     BIGINT,
-  created_at  BIGINT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_notifications_account ON notifications (account_id);
-
+-- Journal d'audit de chaque action admin
 CREATE TABLE IF NOT EXISTS admin_actions (
   id          BIGSERIAL PRIMARY KEY,
   admin_id    TEXT NOT NULL,
@@ -299,6 +278,12 @@ CREATE TABLE IF NOT EXISTS device_credentials (
 CREATE INDEX IF NOT EXISTS idx_device_credentials_account ON device_credentials (account_id);
 
 -- Paiements SMS (auto-renouvellement via TextBee). TID UNIQUE = idempotence.
+-- Statuts SIMPLIFIÉS (3 valeurs) :
+--   pending   : le SMS est là, il attend une décision humaine (la raison est dans `error`)
+--   processed : validé par l'administrateur → l'abonnement a été prolongé
+--   rejected  : refusé par l'administrateur → AUCUN abonnement touché
+-- C'est `matched_account_id` (vide ou non) qui dit si un SMS en attente a déjà été
+-- apparié à un compte ou s'il reste à relier à la main.
 CREATE TABLE IF NOT EXISTS sms_payments (
   id                 BIGSERIAL PRIMARY KEY,
   raw_sms            TEXT NOT NULL,
@@ -307,7 +292,7 @@ CREATE TABLE IF NOT EXISTS sms_payments (
   amount_fcfa        BIGINT NOT NULL,
   tid                TEXT NOT NULL,
   status             TEXT NOT NULL DEFAULT 'pending'
-                     CHECK (status IN ('pending', 'matched', 'unmatched', 'duplicate', 'processed')),
+                     CHECK (status IN ('pending', 'processed', 'rejected')),
   matched_account_id BIGINT REFERENCES accounts(id),
   matched_tier_price BIGINT,
   error              TEXT,
@@ -318,39 +303,25 @@ CREATE TABLE IF NOT EXISTS sms_payments (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sms_payments_tid ON sms_payments (tid);
 CREATE INDEX IF NOT EXISTS idx_sms_payments_status ON sms_payments (status, created_at);
 
--- Version 22 — demandes de catalogue en attente de confirmation du propriétaire.
--- Quand un employé clique "Importer le stock du propriétaire", une op `catalogue.request`
--- est envoyée. Le propriétaire doit confirmer avant que le snapshot ne soit envoyé.
--- Ce store trace les demandes en attente : `status` = pending | confirmed | denied | expired.
-CREATE TABLE IF NOT EXISTS catalogue_requests (
-  id                TEXT PRIMARY KEY,      -- id de l'op catalogue.request (ex: "dev_abc:5")
-  shop_id           TEXT NOT NULL,         -- groupe de partage (s_...)
-  requester_id      TEXT NOT NULL,         -- device_id de l'employé demandeur
-  status            TEXT NOT NULL DEFAULT 'pending'
-                    CHECK (status IN ('pending', 'confirmed', 'denied', 'expired')),
-  created_at        BIGINT NOT NULL,
-  confirmed_at      BIGINT,
-  denied_at         BIGINT,
-  snapshot_sent     BIGINT NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS idx_catalogue_requests_shop ON catalogue_requests (shop_id, status, created_at);
--- R�glages GLOBAUX de l'orchestrateur (mode maintenance, etc.). Une cl�, une valeur
--- JSON : le mode maintenance est un interrupteur lu � CHAQUE handshake, il doit donc
--- �tre en base (et non en m�moire : les fonctions serverless ne partagent rien).
+-- La table « catalogue_requests » (v22 — demandes d'import de stock) a été SUPPRIMÉE
+-- du schéma le 2026-10-28 : elle n'était jamais requêtée par le backend.
+-- Réglages GLOBAUX de l'orchestrateur (mode maintenance, etc.). Une clé, une valeur
+-- JSON : le mode maintenance est un interrupteur lu à CHAQUE handshake, il doit donc
+-- être en base (et non en mémoire : les fonctions serverless ne partagent rien).
 CREATE TABLE IF NOT EXISTS app_settings (
   key         TEXT PRIMARY KEY,
   value       TEXT NOT NULL,
   updated_at  BIGINT NOT NULL
 );
 
--- La CL� PUBLIQUE de l'appareil (ECDSA P-256, la m�me que le canal P2P). Elle permet
--- au serveur de V�RIFIER ce que l'appareil lui envoie � notamment une preuve de
--- paiement sign�e : l'application du marchand peut transmettre son SMS de paiement
--- sans qu'on doive faire confiance � une passerelle tierce.
+-- La CLÉ PUBLIQUE de l'appareil (ECDSA P-256, la même que le canal P2P). Elle permet
+-- au serveur de VÉRIFIER ce que l'appareil lui envoie à notamment une preuve de
+-- paiement signée : l'application du marchand peut transmettre son SMS de paiement
+-- sans qu'on doive faire confiance à une passerelle tierce.
 ALTER TABLE shops ADD COLUMN IF NOT EXISTS public_key TEXT;
 
--- L'ARCHIVE se range par COMPTE, pas par groupe P2P : le groupe d'un �cran peut
--- changer (r�installation, fiche purg�e ? le groupe est recalcul�), et une archive
--- rang�e par groupe devient alors introuvable au moment pr�cis o� l'on en a besoin.
+-- L'ARCHIVE se range par COMPTE, pas par groupe P2P : le groupe d'un écran peut
+-- changer (réinstallation, fiche purgée ? le groupe est recalculé), et une archive
+-- rangée par groupe devient alors introuvable au moment précis où l'on en a besoin.
 ALTER TABLE sync_ops ADD COLUMN IF NOT EXISTS account_id BIGINT;
 CREATE INDEX IF NOT EXISTS idx_sync_ops_account ON sync_ops (account_id, created_at, id);

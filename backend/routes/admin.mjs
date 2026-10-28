@@ -29,11 +29,9 @@ import {
   accountOriginOk,
   priceForDevices,
   computeStatus,
-  publicShop,
   applyTierRenewal,
   tierForAmount,
   computeSubscriptions,
-  aggregateStats,
   attachAccountForLegacy,
   upsertShop,
 } from "../lib.mjs";
@@ -73,34 +71,6 @@ router.get("/api/v1/admin/shops", requireAdmin, async (req, res) => {
     }),
   );
   res.json({ shops: result, total: result.length });
-});
-
-router.get("/api/v1/admin/shop/:id/devices", requireAdmin, async (req, res) => {
-  const shopId = Number(req.params.id);
-  if (!Number.isFinite(shopId)) return res.status(400).json({ error: "id invalide" });
-  const shop = await byId(shopId);
-  if (!shop) return res.status(404).json({ error: "Boutique inconnue." });
-  // Les écrans dont la place a été LIBÉRÉE (départ) restent dans l'historique mais
-  // ne sont plus des écrans du commerce : les compter ici ferait dire au tableau de
-  // bord « 3/3 » alors qu'une place est disponible.
-  const devices = await db.all(
-    "SELECT * FROM shops WHERE account_id = $1 AND released_at IS NULL ORDER BY registration_date ASC",
-    shop.account_id ?? 0,
-  );
-  const account = shop.account_id ? await accountById(shop.account_id) : null;
-  res.json({
-    shop_id: shop.id,
-    store_name: shop.store_name,
-    account: account ? await publicAccount(account) : null,
-    devices: devices.map((d) => ({
-      id: d.id,
-      device_id: d.device_id,
-      store_name: d.store_name,
-      registered_at: d.registration_date,
-      last_sync_at: d.last_sync_at ?? null,
-      status: d.expiry_date > Date.now() ? (d.suspended_at ? "suspended" : "active") : "expired",
-    })),
-  });
 });
 
 // ── Protocole v3 : commandes admin (boîte aux lettres) ────────────────────────────
@@ -229,51 +199,6 @@ router.post("/api/v1/admin/commands", requireAdmin, async (req, res) => {
     command: { id, account_id: account.id, action_type, payload, expires_at, created_at: now, delivered_at: null },
     account: await publicAccount(await accountById(account.id)),
   });
-});
-
-// ── Protocole v2 : liste admin (par boutique) ──────────────────────────────────────
-router.get("/api/v1/admin/list-shops", requireAdmin, async (req, res) => {
-  const now = Date.now();
-  const session = sessionOf(req);
-  // Scope projet → ses caisses uniquement. Master → tout, ou `?project=` pour filtrer.
-  const scopeOrigin =
-    session.scope === "project" ? session.project : str(req.query.project) || null;
-  const rows = await listShops(scopeOrigin);
-  const shops = await Promise.all(
-    rows.map(async (s) => {
-      const lastCommand = await db.get(
-        `SELECT id, action_type, payload, expires_at, created_at, delivered_at, superseded_at
-         FROM admin_commands WHERE device_id = $1 AND superseded_at IS NULL
-         ORDER BY created_at DESC LIMIT 1`,
-        s.device_id,
-      );
-      const expired = (await db.get(
-        `SELECT COUNT(*) AS c FROM admin_commands
-         WHERE device_id = $1 AND delivered_at IS NULL AND superseded_at IS NULL AND expires_at <= $2`,
-        s.device_id,
-        now,
-      )).c;
-      return {
-        ...publicShop(s),
-        id: s.id,
-        last_sync_at: s.last_sync_at ?? null,
-        payments: s.payments,
-        status: computeStatus(s),
-        last_command: lastCommand
-          ? {
-              id: lastCommand.id,
-              action_type: lastCommand.action_type,
-              payload: JSON.parse(lastCommand.payload),
-              expires_at: lastCommand.expires_at,
-              created_at: lastCommand.created_at,
-              delivered_at: lastCommand.delivered_at ?? null,
-            }
-          : null,
-        expired_commands: expired,
-      };
-    }),
-  );
-  res.json({ shops });
 });
 
 router.get("/api/v1/admin/shops/:device_id/commands", requireAdmin, async (req, res) => {
@@ -463,6 +388,91 @@ router.get("/api/v1/admin/requests", requireAdmin, async (req, res) => {
   res.json({ requests });
 });
 
+// ── Demandes de paiement (payment_requests) ───────────────────────────────────────────
+router.get("/api/v1/admin/payment-requests", requireAdmin, async (req, res) => {
+  const session = sessionOf(req);
+  const origin = session.scope === "project" ? session.project : str(req.query.project) || null;
+  const statusFilter = str(req.query.status);
+  const rows = await db.all(
+    `SELECT * FROM payment_requests ${statusFilter ? "WHERE status = $1" : ""}
+     ORDER BY created_at DESC LIMIT 200`,
+    ...(statusFilter ? [statusFilter] : []),
+  );
+  const requests = await Promise.all(rows.map(async (r) => {
+    const shop = await byId(r.shop_id);
+    return {
+      id: r.id,
+      shop_id: r.shop_id,
+      store_name: shop?.store_name ?? null,
+      sms_text: r.sms_text,
+      plan: r.plan,
+      status: r.status,
+      created_at: r.created_at,
+      validated_at: r.validated_at,
+    };
+  }));
+  res.json({ requests });
+});
+
+async function paymentRequestForAdmin(req, res) {
+  const row = await db.get("SELECT * FROM payment_requests WHERE id = $1", Number(req.params.id));
+  if (!row) {
+    res.status(404).json({ error: "Demande de paiement introuvable." });
+    return null;
+  }
+  const session = sessionOf(req);
+  const account = await accountById(row.shop_id > 0 ? /* not directly usable */ null : null);
+  // On vérifie l'appartenance projet via la boutique
+  const shop = await byId(row.shop_id);
+  if (!shop) return null;
+  if (session.scope === "project" && shop.app_origin !== session.project) {
+    res.status(403).json({ error: "Demande hors de ce projet." });
+    return null;
+  }
+  return { row, shop };
+}
+
+/** Un clic « Valider » : approuve la demande de paiement et prolonge le compte de +30 jours. */
+router.post("/api/v1/admin/payment-requests/:id/validate", requireAdmin, async (req, res) => {
+  const found = await paymentRequestForAdmin(req, res);
+  if (!found) return;
+  const { row, shop } = found;
+  if (row.status !== "pending")
+    return res.status(409).json({ error: `Demande déjà traitée (${row.status}).` });
+  const nowTimestamp = Date.now();
+  // 1. Met à jour le statut de la demande
+  await db.run(
+    "UPDATE payment_requests SET status = 'approved', validated_at = $1 WHERE id = $2",
+    nowTimestamp,
+    row.id,
+  );
+  // 2. Met à jour la date d'expiration de la boutique de +30 jours
+  const shopAccount = shop.account_id ? await accountById(shop.account_id) : null;
+  if (!shopAccount) return res.status(409).json({ error: "Cette boutique n'a pas de compte associé." });
+  const new_expiry_date = shopAccount.expiry_date
+    ? Math.max(Date.now(), shopAccount.expiry_date) + 30 * DAY_MS
+    : nowTimestamp + 30 * DAY_MS;
+  await db.run(
+    "UPDATE accounts SET expiry_date = $1, updated_at = $2 WHERE id = $3",
+    new_expiry_date,
+    nowTimestamp,
+    shopAccount.id,
+  );
+  await syncShopsFromAccount(shopAccount.id);
+  console.log(
+    `[${new Date().toISOString()}] DEMANDE DE PAIEMENT #${row.id} VALIDÉE → shop_id=${shop.id}, compte #${shopAccount.id}, nouvelle échéance +30 j`,
+  );
+  res.json({
+    ok: true,
+    request_id: row.id,
+    shop_id: shop.id,
+    new_expiry_date,
+    account: await publicAccount(await accountById(shopAccount.id)),
+  });
+});
+
+// ── Demandes d'abonnement (vue + validation EN UN CLIC) ────────────────────────────
+
 async function requestForAdmin(req, res) {
   const row = await db.get("SELECT * FROM subscription_requests WHERE id = $1", Number(req.params.id));
   if (!row) {
@@ -560,9 +570,10 @@ router.post("/api/v1/admin/requests/:id/reject", requireAdmin, async (req, res) 
 });
 
 // ── Paiements SMS (levier admin sur l'auto-renouvellement TextBee) ───────────────
-// Le webhook gère le cas nominal (match → renouvellement auto). Ici : la liste pour le
-// dashboard et le rattachement manuel d'un SMS 'unmatched' à un compte (typographie du
-// nom différente, téléphone absent du compte, etc.).
+// Le webhook ne renouvelle PLUS rien : le SMS arrive en 'pending' et attend une
+// décision humaine. Ici : la liste pour le dashboard et le rattachement manuel d'un
+// SMS à un compte (typographie du nom différente, téléphone absent du compte, etc.).
+// Statuts SIMPLIFIÉS : 'pending' (à traiter) | 'processed' (validé) | 'rejected' (refusé).
 
 /** Version publique d'un paiement SMS, avec le nom du compte matché si présent. */
 async function publicSmsPayment(row) {
@@ -574,6 +585,9 @@ async function publicSmsPayment(row) {
     amount_fcfa: row.amount_fcfa,
     tid: row.tid,
     status: row.status,
+    // Le SMS BRUT : l'administrateur doit pouvoir lire ce que le client a envoyé
+    // (montant illisible, faute de frappe) avant de valider ou de rejeter.
+    raw_sms: row.raw_sms ?? null,
     error: row.error,
     received_at: row.received_at,
     processed_at: row.processed_at,
@@ -594,7 +608,7 @@ router.get("/api/v1/admin/sms-payments", requireAdmin, async (req, res) => {
   res.json({ payments: await Promise.all(rows.map(publicSmsPayment)) });
 });
 
-// Rattachement manuel : body = { account_id }. Vérifie que le SMS est encore 'unmatched'
+// Rattachement manuel : body = { account_id }. Verifie que le SMS est encore 'pending'
 // ou 'pending', applique la renouvellement, puis passe la ligne en 'processed'.
 //
 // C'est désormais LE SEUL chemin de renouvellement par SMS : le webhook ne prolonge plus
@@ -603,13 +617,14 @@ router.get("/api/v1/admin/sms-payments", requireAdmin, async (req, res) => {
 // que `parseSms` est une regex : un SMS forgé au bon numéro et au bon palier renouvelait
 // auparavant n'importe quel abonnement.
 //
-  // `account_id` est OPTIONNEL quand le webhook a déjà apparié le SMS (`pending`) : le
-  // compte trouvé est alors celui du numéro payeur. Il reste exigé pour un `unmatched`,
-  // où le choix est une décision humaine. On n'oblige pas à ressaisir ce qu'on sait déjà.
+// `account_id` est OPTIONNEL quand le webhook a déjà apparié le SMS : le
+// compte trouvé est alors celui du numéro payeur. Il reste exigé pour un SMS sans
+// compte reconnu, où le choix est une décision humaine. On n'oblige pas à ressaisir
+// ce qu'on sait déjà.
 router.post("/api/v1/admin/sms-payments/:id/process", requireAdmin, async (req, res) => {
   const row = await db.get("SELECT * FROM sms_payments WHERE id = $1", Number(req.params.id));
   if (!row) return res.status(404).json({ error: "Paiement SMS introuvable." });
-  if (row.status !== "unmatched" && row.status !== "pending")
+  if (row.status !== "pending")
     return res.status(409).json({ error: `Paiement déjà traité (${row.status}).` });
 
   const account_id = Math.round(Number(req.body?.account_id));
@@ -653,6 +668,38 @@ router.post("/api/v1/admin/sms-payments/:id/process", requireAdmin, async (req, 
     payment: await publicSmsPayment(await db.get("SELECT * FROM sms_payments WHERE id = $1", row.id)),
     account: await publicAccount(await accountById(account.id)),
   });
+});
+
+// ── Rejet d'un SMS de paiement ─────────────────────────────────────────────────────
+// Le SMS n'est PAS un renouvellement : c'est une REQUÊTE. Tant que l'administrateur
+// ne décide pas, rien ne bouge. « Rejeter » n'annule donc aucun abonnement — il sort
+// la ligne de la file d'attente pour qu'elle ne revienne pas dans les « à vérifier ».
+router.post("/api/v1/admin/sms-payments/:id/reject", requireAdmin, async (req, res) => {
+  const row = await db.get("SELECT * FROM sms_payments WHERE id = $1", Number(req.params.id));
+  if (!row) return res.status(404).json({ error: "Paiement SMS introuvable." });
+  if (row.status === "processed")
+    return res.status(409).json({ error: "Ce paiement a déjà été validé." });
+
+  const now = Date.now();
+  await db.run(
+    "UPDATE sms_payments SET status = 'rejected', error = $1, processed_at = $2 WHERE id = $3",
+    str(req.body?.reason) || "Rejeté par l'administrateur",
+    now,
+    row.id,
+  );
+  await logActivity(
+    "warn",
+    "payment",
+    "SMS de paiement rejeté",
+    `${row.name} (${row.phone}) — ${row.amount_fcfa.toLocaleString("fr-FR")} F`,
+    { sms_payment_id: row.id, amount: row.amount_fcfa },
+    null,
+  );
+  const session = sessionOf(req);
+  console.log(
+    `[${new Date().toISOString()}] SMS #${row.id} REJETÉ par ${session.scope} — « ${row.name} » ${row.amount_fcfa} F`,
+  );
+  res.json({ ok: true, payment: await publicSmsPayment(await db.get("SELECT * FROM sms_payments WHERE id = $1", row.id)) });
 });
 
 // ── Suppression d'une caisse ──────────────────────────────────────────────────────
@@ -774,6 +821,7 @@ router.delete("/api/v1/admin/accounts/:account_id", requireAdmin, async (req, re
   res.json({ ok: true, account_id });
 });
 
+// Force-release de TOUS les appareils d'un compte (pour débloquer un client manuellement).
 // Par la caisse elle-même, depuis Paramètres. Lien faible mais suffisant : elle prouve
 // qu'elle connaît son device_id ET le nom de boutique que le serveur a enregistré.
 router.delete("/api/v1/shops/:device_id", async (req, res) => {
@@ -939,55 +987,11 @@ router.post("/api/v1/admin/delete-requests/:id/reject", requireAdmin, async (req
   res.json({ ok: true, device_id: row.device_id });
 });
 
-// ── Reset total de la base ─────────────────────────────────────────────────────────
-// POST /api/v1/admin/reset : supprime TOUTES les données (shops, accounts, payments,
-// admin_commands, sync_payloads, subscription_requests, journal d'audit…) et réinitialise
-// les séquences. TRUNCATE ... RESTART IDENTITY CASCADE conserve les PROJETS : ils ont
-// leur abonnement propre, le reset fait repartir les boutiques à zéro.
-// Protégé par authentification admin (scope master uniquement).
-router.post("/api/v1/admin/reset", requireAdmin, async (req, res) => {
-  const session = sessionOf(req);
-  if (session.scope !== "master") {
-    return res.status(403).json({ error: "Seul l'administrateur master peut réinitialiser la base." });
-  }
-  const confirm = str(req.body?.confirm);
-  if (confirm !== "CONFIRM_RESET") {
-    return res.status(400).json({ error: "Envoyez { confirm: 'CONFIRM_RESET' } pour confirmer." });
-  }
-  await db.tx((client) =>
-    client.query(
-      "TRUNCATE shops, payments, admin_commands, sync_payloads, daily_stats, subscription_requests, delete_requests, admin_actions, activity_events, payment_events, sync_ops, device_blessings, device_credentials, sms_payments, accounts RESTART IDENTITY CASCADE",
-    ),
-  );
-  console.log(`[${new Date().toISOString()}] BASE RÉINITIALISÉE par ${session.scope} (toutes les données supprimées)`);
-  res.json({ ok: true, message: "Toutes les données ont été supprimées. Les projets ont été conservés." });
-});
-
 // ── Liste publique des projets (id + nom seulement) : sert au sélecteur du login. ──
 // Aucune donnée sensible : pas de mot de passe, pas de compteurs.
 router.get("/api/v1/public/projects", async (_req, res) => {
   res.json({
     projects: await db.all("SELECT id, name FROM projects ORDER BY name ASC"),
-  });
-});
-
-// ── Stats réelles par projet (agrégées depuis sync_payloads) ──────────────────────
-// Le dashboard affiche les données que les caisses déposent réellement.
-router.get("/api/v1/admin/stats", requireAdmin, async (req, res) => {
-  const session = sessionOf(req);
-  // Scope projet → ses caisses uniquement. Master → tout, ou `?project=` pour filtrer.
-  const origin =
-    session.scope === "project" ? session.project : str(req.query.project) || null;
-  const shops = await listShops(origin);
-  const rows = await db.all("SELECT * FROM accounts WHERE merged_into IS NULL");
-  const accounts = [];
-  for (const a of rows) {
-    if (await accountOriginOk(a, origin)) accounts.push(a);
-  }
-  res.json({
-    project: origin,
-    subscriptions: await computeSubscriptions(accounts),
-    ...(await aggregateStats(shops)),
   });
 });
 
@@ -1007,31 +1011,10 @@ router.get("/api/v1/admin/storefront", requireAdmin, async (req, res) => {
     if (await accountOriginOk(a, origin)) accounts.push(a);
   }
 
-  // CA par caisse depuis l'historique quotidien (daily_stats), sur le mois civil en cours
-  // et sur 30 jours glissants. `day` étant le minuit local de l'appareil, la frontière du
-  // mois est calculée dans le fuseau du serveur — même zone que les caisses (UTC+1).
-  const deviceIds = shops.map((s) => s.device_id);
-  const sumByDevice = async (since) => {
-    const m = new Map();
-    if (deviceIds.length === 0) return m;
-    for (const r of await db.all(
-      `SELECT device_id, SUM(revenue) AS rev FROM daily_stats
-       WHERE day >= $1 AND device_id IN (${deviceIds.map((_, i) => "$" + (i + 2)).join(",")})
-       GROUP BY device_id`,
-      since,
-      ...deviceIds,
-    )) {
-      m.set(r.device_id, Number(r.rev) || 0);
-    }
-    return m;
-  };
+  // Le CA des boutiques n'est PLUS calculé ici : il reste sur les téléphones des
+  // clients (l'orchestrateur ne stocke plus les ventes — cf. entry.mjs / sync-data).
+  // Les champs `ca_*` restent dans le contrat de la réponse, à zéro.
   const monthStart = new Date(new Date(now).getFullYear(), new Date(now).getMonth(), 1).getTime(); // minuit local du 1er
-  const dayStart = new Date(now).setHours(0, 0, 0, 0);
-  const [caMonth, ca30d, caToday] = await Promise.all([
-    sumByDevice(monthStart),
-    sumByDevice(now - 30 * DAY_MS),
-    sumByDevice(dayStart),
-  ]);
 
   // Une LIGNE PAR COMMERCE. Le téléphone d'un employé est un poste de la boutique de son
   // patron, pas une boutique : on regroupait les écrans et tout ce qui suit — compteurs,
@@ -1057,9 +1040,6 @@ router.get("/api/v1/admin/storefront", requireAdmin, async (req, res) => {
       const plan = account
         ? planNameForDevices(tierAtPrice ? tierAtPrice.devices : account.max_devices) ?? "Sur mesure"
         : null;
-      // Le CA court sur TOUS les écrans du commerce, partis compris : l'historique
-      // d'un écran qui a quitté le commerce reste du CA du commerce.
-      const ca = (m) => group.devices.reduce((s, d) => s + (m.get(d.device_id) ?? 0), 0);
       const online = devices.some(
         (d) => d.last_sync_at && now - d.last_sync_at < ONLINE_WINDOW_MS,
       );
@@ -1094,9 +1074,11 @@ router.get("/api/v1/admin/storefront", requireAdmin, async (req, res) => {
         registered_devices: inscrites?.length ?? devices.length,
         max_devices: account?.max_devices ?? 1,
         over_limit: overLimit,
-        ca_today_fcfa: ca(caToday),
-        ca_month_fcfa: ca(caMonth),
-        ca_30d_fcfa: ca(ca30d),
+        // Le CA du commerce n'est plus connu de l'orchestrateur (il reste sur les
+        // téléphones) : les champs subsistent dans le contrat, à zéro.
+        ca_today_fcfa: 0,
+        ca_month_fcfa: 0,
+        ca_30d_fcfa: 0,
         elyndra_month_fcfa: paid ?? 0,
         // Les écrans du commerce, pour les voir sans compter autant de boutiques.
         devices: devices.map((d) => ({
@@ -1143,7 +1125,7 @@ router.get("/api/v1/admin/storefront", requireAdmin, async (req, res) => {
   const subs = await computeSubscriptions(accounts);
   const elyndra = {
     mois_encaisse: elyndraMois,
-    ca_boutiques_mois: [...caMonth.values()].reduce((a, b) => a + b, 0),
+    ca_boutiques_mois: 0,
     mrr_fcfa: subs.mrr_fcfa,
     arr_fcfa: subs.mrr_fcfa * 12,
   };
@@ -1169,132 +1151,6 @@ router.get("/api/v1/admin/storefront", requireAdmin, async (req, res) => {
       (a, b) => b.ca_month_fcfa - a.ca_month_fcfa || a.store_name.localeCompare(b.store_name, "fr"),
     ),
   });
-});
-
-// ── Forecast MRR prévisionnel (12 mois) ───────────────────────────────────────────
-// Projette le MRR mois par mois en supposant que les abonnements non renouvelés
-// perdent leur revenu au mois de leur expiration. Taux de renouvellement configurable
-// (défaut 80 %) via query param `renewal_rate`.
-router.get("/api/v1/admin/forecast", requireAdmin, async (req, res) => {
-  const accounts = await db.all("SELECT * FROM accounts WHERE merged_into IS NULL");
-  const now = Date.now();
-  const nowDate = new Date();
-  const months = 12;
-  const renewalRate = Math.min(1, Math.max(0, parseFloat(str(req.query.renewal_rate)) || 0.8));
-
-  // MRR courant = tous les comptes actifs ou en grace.
-  const currentMrr = accounts
-    .filter((a) => {
-      const st = computeAccountStatus(a);
-      return st === "active" || st === "grace";
-    })
-    .reduce((sum, a) => sum + priceForDevices(a.max_devices), 0);
-
-  // Pour chaque compte actif, on calcule dans quel mois il expire (si non renouvelé).
-  const lossByMonth = new Map();
-  for (const account of accounts) {
-    const st = computeAccountStatus(account);
-    if (st !== "active" && st !== "grace") continue;
-    const price = priceForDevices(account.max_devices);
-    const expiry = new Date(account.expiry_date);
-    const label = `${expiry.getFullYear()}-${String(expiry.getMonth() + 1).padStart(2, "0")}`;
-    lossByMonth.set(label, (lossByMonth.get(label) ?? 0) + price);
-  }
-
-  // Projection mois par mois.
-  const result = [];
-  let projectedMrr = currentMrr;
-  for (let i = 0; i < months; i++) {
-    const d = new Date(nowDate.getFullYear(), nowDate.getMonth() + i, 1);
-    const label = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-    const loss = lossByMonth.get(label) ?? 0;
-    // Les abonnements expirant ce mois sont perdus sauf ceux renouvelés (renewalRate).
-    projectedMrr -= loss * (1 - renewalRate);
-    result.push({
-      month: label,
-      mrr_fcfa: Math.max(0, Math.round(projectedMrr)),
-      churn_fcfa: Math.round(loss * (1 - renewalRate)),
-      renewal_rate: renewalRate,
-    });
-  }
-
-  res.json({ current_mrr_fcfa: currentMrr, forecast: result });
-});
-
-// ── Revenus par palier d'abonnement (mensuel) ─────────────────────────────────────
-// Retourne les 6 derniers mois de revenus, ventilés par palier (10k / 25k / 50k).
-// Un paiement est « daté » de created_at ; le palier est déduit du montant.
-router.get("/api/v1/admin/revenue-by-tier", requireAdmin, async (_req, res) => {
-  const months = 6;
-  const now = new Date();
-  const result = [];
-
-  for (let i = months - 1; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const year = d.getFullYear();
-    const month = d.getMonth(); // 0-based
-    const startMs = new Date(year, month, 1).getTime();
-    const endMs = new Date(year, month + 1, 1).getTime();
-    const label = `${year}-${String(month + 1).padStart(2, "0")}`;
-
-    const payments = await db.all("SELECT amount FROM payments WHERE created_at >= $1 AND created_at < $2", startMs, endMs);
-
-    const tiers = { tier_10k: 0, tier_25k: 0, tier_50k: 0, other: 0 };
-    let total = 0;
-
-    for (const p of payments) {
-      total += p.amount;
-      if (p.amount >= 50_000) tiers.tier_50k += p.amount;
-      else if (p.amount >= 25_000) tiers.tier_25k += p.amount;
-      else if (p.amount >= 10_000) tiers.tier_10k += p.amount;
-      else tiers.other += p.amount;
-    }
-
-    result.push({ month: label, ...tiers, total });
-  }
-
-  res.json({ months: result });
-});
-
-// ── Rétention / churn clients ────────────────────────────────────────────────────
-// Pour chaque mois des 6 derniers : combien de comptes actifs, nouveaux, perdus,
-// et taux de rétention.
-router.get("/api/v1/admin/retention", requireAdmin, async (_req, res) => {
-  const months = 6;
-  const now = new Date();
-  const accounts = await db.all("SELECT * FROM accounts WHERE merged_into IS NULL");
-
-  // Par compte, on détermine son statut à la fin de chaque mois.
-  const result = [];
-
-  for (let i = months - 1; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const year = d.getFullYear();
-    const month = d.getMonth();
-    const endMs = new Date(year, month + 1, 0, 23, 59, 59, 999).getTime();
-    const label = `${year}-${String(month + 1).padStart(2, "0")}`;
-
-    let active = 0;
-    let newThisMonth = 0;
-    let churnedThisMonth = 0;
-
-    for (const a of accounts) {
-      const createdBefore = a.created_at <= endMs;
-      const expiredBy = a.expiry_date <= endMs;
-      const isChurned = expiredBy || (a.status === "suspended" && a.updated_at <= endMs);
-
-      if (createdBefore && !isChurned) active++;
-      if (a.created_at >= new Date(year, month, 1).getTime() && createdBefore) newThisMonth++;
-      if (isChurned && a.created_at < new Date(year, month, 1).getTime()) churnedThisMonth++;
-    }
-
-    const prev = result.length > 0 ? result[result.length - 1].active : active;
-    const retention = prev > 0 ? Math.round(((active - newThisMonth) / prev) * 100) : 100;
-
-    result.push({ month: label, active, new: newThisMonth, churned: churnedThisMonth, retention_pct: retention });
-  }
-
-  res.json({ months: result });
 });
 
 // ── Protocole v2 : gestion des projets (master uniquement) ────────────────────────

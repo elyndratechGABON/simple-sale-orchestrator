@@ -361,12 +361,30 @@ router.post("/api/v1/handshake", async (req, res) => {
     shop = await byId(shop.id);
   }
   if (!account) {
-    if (pendingBlessing) {
-      // Pas de compte hérité : l'écran attend la bénédiction du propriétaire.
-    } else if (!shop.account_id || !(await accountById(shop.account_id))) {
-      account = await attachAccountForLegacy(shop);
-    } else {
-      account = await accountById(shop.account_id);
+    // NOUVEAU : si le handshake fournit un account_phone et qu'un compte existe déjà,
+    // on rattache l'appareil à ce compte existant au lieu d'en créer un nouveau.
+    // Cela garantit qu'un employé qui scanne un QR de propriétaire rejoint le bon
+    // compte et n'est pas créé comme propriétaire d'une boutique isolée.
+    if (body.account_phone) {
+      const phoneMatch = await accountByPhone(normPhone(body.account_phone));
+      if (phoneMatch) {
+        const resolved = await resolveAccount(phoneMatch);
+        if (resolved) {
+          await db.run("UPDATE shops SET account_id = $1 WHERE id = $2", resolved.id, shop.id);
+          shop = await byId(shop.id);
+          account = resolved;
+        }
+      }
+    }
+    // FIN NOUVEAU
+    if (!account) {
+      if (pendingBlessing) {
+        // Pas de compte hérité : l'écran attend la bénédiction du propriétaire.
+      } else if (!shop.account_id || !(await accountById(shop.account_id))) {
+        account = await attachAccountForLegacy(shop);
+      } else {
+        account = await accountById(shop.account_id);
+      }
     }
   }
 
@@ -418,6 +436,30 @@ router.post("/api/v1/handshake", async (req, res) => {
   const st = computeAccountStatus(account);
   const overLimit = await deviceOverLimit(account, device_id);
   const effective = overLimit ? "suspended" : st;
+
+  // Auto-cleanup : libérer les anciens appareils "ghost" qui n'ont pas donné signe de vie
+  // depuis plus de 7 jours. Cela débloque les nouveaux appareils quand un ancien employé
+  // est parti sans libérer la place (network error, etc.).
+  const GHOST_DEVICE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+  const ghostDevices = await db.all(
+    `SELECT id, device_id, registration_date, last_sync_at FROM shops WHERE account_id = $1 AND released_at IS NULL`,
+    account.id,
+  );
+  for (const d of ghostDevices) {
+    // Considérer un appareil "ghost" s'il n'a pas de last_sync_at récent (> 7 jours)
+    // ou s'il n'a jamais syncé (last_sync_at undefined).
+    const lastSync = d.last_sync_at ?? d.registration_date;
+    if (now - lastSync > GHOST_DEVICE_TTL_MS) {
+      await db.run(
+        `UPDATE shops SET released_at = $1 WHERE id = $2`,
+        now,
+        d.id,
+      );
+      console.log(
+        `[${new Date().toISOString()}] AUTO-CLEANUP : libération ghost device ${d.device_id} du compte #${account.id} (inactif depuis ${((now - lastSync) / (24 * 60 * 60 * 1000)).toFixed(1)} j)`,
+      );
+    }
+  }
 
   // 6. Miroir : la fiche boutique reflète le compte (routes legacy et vieux builds).
   if (
@@ -508,40 +550,12 @@ router.post("/api/v1/sync-data", async (req, res) => {
     return res.status(403).json({ error: "Compte suspendu ou expiré.", status: "blocked" });
   }
 
-  const origin = typeof body.app_origin === "string" && body.app_origin.trim() ? body.app_origin.trim() : "pos";
   const now = Date.now();
-  await db.run(
-    "INSERT INTO sync_payloads (device_id, app_origin, payload, received_at) VALUES ($1, $2, $3, $4)",
-    device_id,
-    origin,
-    JSON.stringify(body.data_payload),
-    now,
-  );
+  // L'orchestrateur ne STOCKE PLUS les ventes (elles restent sur les téléphones,
+  // partagées par le relais P2P) : plus d'INSERT dans sync_payloads ni daily_stats.
+  // On se contente de dater la synchronisation — c'est ce que lit la console
+  // (« en ligne / hors ligne », « dernière sync »).
   await db.run("UPDATE shops SET last_sync_at = $1, updated_at = $2 WHERE id = $3", now, now, shop.id);
-
-  // Accumulation du CA par jour : la fenêtre glissante de 7 j permet de reconstituer le
-  // CA mensuel de chaque caisse sans rien demander de plus à l'app. On écrase la valeur
-  // du jour à chaque sync (idempotent) ; `day` est le minuit LOCAL de l'appareil, en ms.
-  const by_day = Array.isArray(body.data_payload?.by_day) ? body.data_payload.by_day : [];
-  for (const d of by_day) {
-    const day = Math.round(Number(d?.day));
-    if (!Number.isFinite(day) || day <= 0) continue;
-    await db.run(
-      `INSERT INTO daily_stats (device_id, day, revenue, profit, sales, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT(device_id, day) DO UPDATE SET
-         revenue = excluded.revenue,
-         profit  = excluded.profit,
-         sales   = excluded.sales,
-         updated_at = excluded.updated_at`,
-      device_id,
-      day,
-      Number(d.revenue) || 0,
-      Number(d.profit) || 0,
-      Number(d.sales) || 0,
-      now,
-    );
-  }
 
   res.json({ ok: true, received_at: now, status: "active" });
 });
@@ -603,6 +617,52 @@ router.post("/api/v1/requests", async (req, res) => {
   });
 });
 
+// ── Demande d'abonnement par proof SMS (depuis la caisse) ────────────────────────
+// La caisse envoie { shop_id, sms_text, plan } après un paiement mobile money.
+// Le serveur crée une demande en statut 'pending' que l'admin validera ensuite.
+// Contrairement au flux webhook complet, ici la validation est manuelle via le dashboard.
+router.post("/api/v1/subscriptions/request-payment", async (req, res) => {
+  const body = req.body ?? {};
+  const shop_id = Math.round(Number(body.shop_id));
+  const sms_text = str(body.sms_text);
+  const plan = str(body.plan);
+  if (!Number.isFinite(shop_id) || shop_id <= 0)
+    return res.status(400).json({ error: "shop_id requis et valide." });
+  if (!sms_text) return res.status(400).json({ error: "sms_text requis." });
+  if (!plan) return res.status(400).json({ error: "plan requis." });
+
+  const shop = await byId(shop_id);
+  if (!shop) return res.status(404).json({ error: "Boutique introuvable." });
+
+  const account = shop.account_id ? await accountById(shop.account_id) : null;
+  if (!account) return res.status(409).json({ error: "Cette boutique n'a pas encore de compte." });
+
+  const nowTimestamp = Date.now();
+  // Idempotence : si une demande pending existe deja pour ce shop, on la supersede.
+  await db.run(
+    "UPDATE payment_requests SET status = 'superseded' WHERE shop_id = $1 AND status = 'pending'",
+    shop_id,
+  );
+  const info = await db.get(
+    `INSERT INTO payment_requests
+       (shop_id, sms_text, plan, status, created_at)
+    VALUES ($1, $2, $3, 'pending', $4)
+    RETURNING id`,
+    shop_id,
+    sms_text,
+    plan,
+    nowTimestamp,
+  );
+  const request = await db.get("SELECT * FROM payment_requests WHERE id = $1", Number(info.id));
+  console.log(
+    `[${new Date().toISOString()}] DEMANDE ABONNEMENT #${request.id} shop_id=${shop_id} plan="${plan}" — status: pending`,
+  );
+  res.status(201).json({
+    ok: true,
+    request: { id: request.id, status: request.status, created_at: request.created_at, shop_id },
+  });
+});
+
 // ── Enregistrement d'un SMS de paiement ───────────────────────────────────────────
 // Corps COMMUN du webhook et de la preuve signée envoyée par l'application : le
 // parsing, l'anti-double (TID unique), le rapprochement téléphone + palier, et la
@@ -621,8 +681,8 @@ async function recordPaymentSms({ raw, receivedAt, source }) {
   const now = Date.now();
   const received_at = receivedAt || now;
 
-  // Idempotence : l'insertion échoue si le TID existe déjà (UNIQUE). On bascule alors
-  // la ligne existante en 'duplicate' et on arrête — jamais de double renouvellement.
+  // Idempotence : l'insertion échoue si le TID existe déjà (UNIQUE). On horodate alors
+  // la ligne existante et on arrête — jamais de double traitement.
   let info;
   try {
     info = await db.get(
@@ -698,16 +758,20 @@ async function recordPaymentSms({ raw, receivedAt, source }) {
   const errorReason = !account
     ? "téléphone inconnu — aucun compte associé"
     : "montant ne correspond à aucun palier (10 000 / 25 000 / 50 000 F)";
+  // Statut SIMPLIFIÉ : 'pending' | 'processed' | 'rejected'. Un SMS qui ne trouve pas
+  // son compte reste donc EN ATTENTE (c'est lui que l'administrateur doit trancher) :
+  // la raison est dans `error`, et c'est `matched_account_id` (vide) qui dit qu'il
+  // reste à relier à un compte.
   await db.run(
-    "UPDATE sms_payments SET status = 'unmatched', error = $1, processed_at = $2 WHERE id = $3",
+    "UPDATE sms_payments SET status = 'pending', error = $1, processed_at = $2 WHERE id = $3",
     errorReason,
     now,
     paymentId,
   );
   console.log(
-    `[${new Date().toISOString()}] SMS #${paymentId} NON MATCHÉ (${errorReason}) — « ${parsed.name} » (${parsed.phone}) ${parsed.amount} F, TID ${parsed.tid}`,
+    `[${new Date().toISOString()}] SMS #${paymentId} À RELIER (${errorReason}) — « ${parsed.name} » (${parsed.phone}) ${parsed.amount} F, TID ${parsed.tid}`,
   );
-  return { ok: true, status: "unmatched", payment_id: paymentId, error: errorReason };
+  return { ok: true, status: "pending", payment_id: paymentId, error: errorReason };
 }
 
 // ── Webhook SMS (TextBee → demande de renouvellement d'abonnement) ───────────────
@@ -719,7 +783,7 @@ async function recordPaymentSms({ raw, receivedAt, source }) {
 //   5. le paiement part en VALIDATION HUMAINE (Control Center) — jamais de
 //      renouvellement automatique.
 // Réponse 200 TOUJOURS après insertion : TextBee cesse ses retries. Un SMS non
-// conforme est stocké en 'unmatched' pour révision admin, jamais perdu.
+// conforme est stocké en attente ('pending') pour révision admin, jamais perdu.
 //
 // Le MÊME traitement sert la preuve signée envoyée par l'application du marchand
 // (auto-hébergé) : voir `recordPaymentSms`.

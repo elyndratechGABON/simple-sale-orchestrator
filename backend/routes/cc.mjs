@@ -28,8 +28,6 @@ import {
   computeStatus,
   publicShop,
   applyTierRenewal,
-  computeSubscriptions,
-  aggregateStats,
   resolveAccount,
   maintenanceState,
   setAppSetting,
@@ -43,113 +41,6 @@ import { logAdminAction, logActivity, upsertPaymentEvent } from "./audit.mjs";
 import { deleteShop } from "./admin.mjs";
 
 const router = Router();
-
-// ── Vue globale (vue globale du Control Center) ────────────────────────────────────
-// Agrège en une seule réponse : KPI business (revenu Elyndra vs CA boutique), état système,
-// projets. Distinct des routes existantes — ne casse aucune vue dashboard existante.
-router.get("/api/v1/admin/overview", requireAdmin, async (req, res) => {
-  const session = sessionOf(req);
-  const origin = session.scope === "project" ? session.project : str(req.query.project) || null;
-  const now = Date.now();
-
-  const shops = await listShops(origin);
-  const rows = await db.all("SELECT * FROM accounts WHERE merged_into IS NULL");
-  const accounts = [];
-  for (const a of rows) {
-    if (await accountOriginOk(a, origin)) accounts.push(a);
-  }
-
-  const subscriptions = await computeSubscriptions(accounts);
-  const stats = await aggregateStats(shops);
-
-  // Revenu Elyndra = somme des paiements (abonnements) sur la période
-  const revenueToday = (await db.get("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= $1", now - DAY_MS)).s;
-  const revenueWeek = (await db.get("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= $1", now - 7 * DAY_MS)).s;
-  const revenueMonth = (await db.get("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= $1", now - 30 * DAY_MS)).s;
-  const revenueYear = (await db.get("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= $1", now - 365 * DAY_MS)).s;
-
-  // Paiements du mois courant
-  const monthStart = new Date(now).getDate() === 1
-    ? now
-    : new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime();
-  const paymentsMonth = (await db.get("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= $1", monthStart)).s;
-
-  // Paiements en attente (SMS unmatched + requests pending)
-  const pendingSms = (await db.get("SELECT COUNT(*) AS c FROM sms_payments WHERE status IN ('pending','unmatched')")).c;
-  const pendingRequests = (await db.get("SELECT COUNT(*) AS c FROM subscription_requests WHERE status = 'pending'")).c;
-  const pendingPayments = pendingSms + pendingRequests;
-
-  // Clients (comptes) — nouveau aujourd'hui, actifs
-  const newToday = accounts.filter((a) => a.created_at >= now - DAY_MS).length;
-
-  // Appareils connectés
-  const connectedDevices = shops.filter(
-    (s) => s.last_sync_at && now - s.last_sync_at < ONLINE_WINDOW_MS,
-  ).length;
-
-  // Paiements confirmés (événements de paiement validés)
-  const confirmedPayments = origin
-    ? (await db.get(
-        "SELECT COUNT(*) AS c FROM payment_events WHERE status = 'confirmed' AND created_at >= $1 AND account_id IN (SELECT id FROM accounts WHERE merged_into IS NULL)",
-        now - DAY_MS,
-      )).c
-    : (await db.get("SELECT COUNT(*) AS c FROM payment_events WHERE status = 'confirmed'")).c;
-
-  // Paiements en attente (payment_events pending)
-  const pendingEventPayments = (await db.get("SELECT COUNT(*) AS c FROM payment_events WHERE status = 'pending'")).c;
-
-  // Revenus récurrents = MRR × 1 mois (revenu mensuel récurrent)
-  const recurringRevenue = subscriptions.mrr_fcfa;
-
-  // CA boutique sur 7 jours (fenêtre glissante réelle, indépendante de l'agrégat sync)
-  const shopWeek = (await db.get("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= $1", now - 7 * DAY_MS)).s;
-
-  res.json({
-    generated_at: now,
-    // — KPI Cards —
-    kpi: {
-      revenue_today: revenueToday,
-      revenue_week: revenueWeek,
-      revenue_month: revenueMonth,
-      revenue_year: revenueYear,
-      clients: accounts.length,
-      clients_new_today: newToday,
-      shops: shops.length,
-      shops_active: shops.filter((s) => computeStatus(s) === "active").length,
-      subscriptions_active: subscriptions.active,
-      subscriptions_expired: subscriptions.expired,
-      devices_connected: connectedDevices,
-      devices_total: shops.length,
-      payments_month: paymentsMonth,
-      payments_confirmed: confirmedPayments,
-      payments_pending: pendingPayments + pendingEventPayments,
-      mrr: subscriptions.mrr_fcfa,
-      arr: subscriptions.mrr_fcfa * 12,
-    },
-    // — Business séparé : revenu Elyndra vs CA boutique —
-    business: {
-      elyndra_revenue: {
-        today: revenueToday,
-        week: revenueWeek,
-        month: revenueMonth,
-        year: revenueYear,
-        mrr: subscriptions.mrr_fcfa,
-        arr: subscriptions.mrr_fcfa * 12,
-      },
-      shop_revenue: {
-        today: stats.totals.revenue,
-        week: shopWeek,
-        month: stats.totals.revenue, // keep as-is (sync_payloads = last 7j aggregate)
-        year: stats.totals.revenue,
-        total_revenue: stats.totals.revenue,
-        total_sales: stats.totals.sales,
-        total_profit: stats.totals.profit,
-      },
-    },
-    subscriptions,
-    shop_stats: stats,
-  });
-});
 
 // ── Clients (comptes) — liste unifiée ─────────────────────────────────────────────
 router.get("/api/v1/admin/clients", requireAdmin, async (req, res) => {
@@ -378,44 +269,6 @@ router.get("/api/v1/admin/shops-detail", requireAdmin, async (req, res) => {
   );
 
   res.json({ shops });
-});
-
-// ── Hiérarchie Abonnement → Propriétaire + Employés ─────────────────────────────────
-// Une ligne par abonnement (compte marchand) avec l'id du propriétaire (écran le plus
-// ancien) et la liste des ids employés (autres écrans). Clair pour ranger / filtrer.
-router.get("/api/v1/admin/subscriptions", requireAdmin, async (req, res) => {
-  const session = sessionOf(req);
-  const origin = session.scope === "project" ? session.project : str(req.query.project) || null;
-  const shops = await listShops(origin);
-  const rows = await db.all("SELECT * FROM accounts WHERE merged_into IS NULL");
-  const accounts = [];
-  for (const a of rows) {
-    if (await accountOriginOk(a, origin)) accounts.push(a);
-  }
-
-  const subs = await Promise.all(
-    accounts.map(async (account) => {
-      const deviceIds = await accountDevices(account.id);
-      // Le propriétaire = premier écran enregistré (le plus ancien)
-      const sorted = deviceIds.sort((a, b) => a.registration_date - b.registration_date);
-      const owner = sorted[0] ?? null;
-      const employees = sorted.slice(1);
-      return {
-        subscription_id: account.id,
-        subscription_name: account.name,
-        owner_device_id: owner?.device_id ?? null,
-        owner_store_name: owner?.store_name ?? null,
-        employee_device_ids: employees.map((d) => d.device_id),
-        employee_store_names: employees.map((d) => d.store_name),
-        all_device_ids: sorted.map((d) => d.device_id),
-        max_devices: account.max_devices,
-        plan_name: planNameForDevices(account.max_devices),
-        status: computeAccountStatus(account),
-      };
-    }),
-  );
-
-  res.json({ subscriptions: subs });
 });
 
 // ── Fiche boutique détaillée ───────────────────────────────────────────────────────
@@ -718,7 +571,7 @@ router.get("/api/v1/admin/payments-view", requireAdmin, async (req, res) => {
   // Totaux
   const todayTotal = (await db.get(`SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= $1 ${shopFilter}`, todayStart, ...shopArgs)).s;
   const monthTotal = (await db.get(`SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE created_at >= $1 ${shopFilter}`, monthStart, ...shopArgs)).s;
-  const pendingCount = (await db.get("SELECT COUNT(*) AS c FROM sms_payments WHERE status IN ('pending','unmatched')")).c;
+  const pendingCount = (await db.get("SELECT COUNT(*) AS c FROM sms_payments WHERE status = 'pending'")).c;
   const confirmedCount = (await db.get("SELECT COUNT(*) AS c FROM payment_events WHERE status = 'confirmed'")).c;
 
   res.json({
@@ -825,6 +678,80 @@ router.post("/api/v1/admin/clients/:id/plan", requireAdmin, async (req, res) => 
   await logAdminAction(req, "account", account.id, "change_plan", req.body?.reason ? str(req.body.reason) : null);
   await logActivity("info", "account", "Abonnement modifié", `${account.name} — ${amount ? amount + " FCFA" : days + " jours"}`, { account_id: account.id }, null, account.id);
   res.json({ ok: true, account: await publicAccount(await accountById(account.id)), result });
+});
+
+// ── Option SUR-MESURE : au-delà des paliers ────────────────────────────────────────
+// Pour les clients généreux : +N appareils et/ou +N jours à un PRIX LIBRE, sans passer
+// par les paliers (Essentiel / Confort / Affluence). Contrairement au changement de
+// palier, `extra_devices` ADDITIONNE au quota actuel (il ne l'écrase pas) — un compte
+// Confort + 1 écran acheté à la main reste à 6 places même si le palier dit 5.
+router.post("/api/v1/admin/accounts/:id/custom", requireAdmin, async (req, res) => {
+  const account = await accountById(Number(req.params.id));
+  if (!account) return res.status(404).json({ error: "Client introuvable." });
+  const session = sessionOf(req);
+  if (!(await accountOriginOk(account, session.scope === "project" ? session.project : null)))
+    return res.status(403).json({ error: "Client hors de ce projet." });
+
+  const extraDevices = Math.max(0, Math.round(Number(req.body?.extra_devices) || 0));
+  const price = Math.max(0, Math.round(Number(req.body?.price_fcfa) || 0));
+  const days = Math.max(0, Math.round(Number(req.body?.days) || 0));
+  if (extraDevices === 0 && price === 0 && days === 0)
+    return res.status(400).json({ error: "Indique au moins : +appareils, un prix ou une durée." });
+  if (extraDevices > 50 || days > 3650 || price > 100_000_000)
+    return res.status(400).json({ error: "Valeurs excessives — vérifie la saisie." });
+
+  const now = Date.now();
+  const newMaxDevices = account.max_devices + extraDevices;
+  const newExpiry = days > 0 ? Math.max(now, account.expiry_date) + days * DAY_MS : account.expiry_date;
+
+  await db.run(
+    "UPDATE accounts SET max_devices = $1, expiry_date = $2, suspended_at = NULL, updated_at = $3 WHERE id = $4",
+    newMaxDevices, newExpiry, now, account.id,
+  );
+  await syncShopsFromAccount(account.id);
+
+  // Encaissement au montant LIBRE : même ancrage que applyTierRenewal (payments.shop_id
+  // est NOT NULL — l'écran fondateur du compte porte le paiement).
+  if (price > 0) {
+    const anchor = await db.get(
+      "SELECT id FROM shops WHERE account_id = $1 ORDER BY registration_date ASC, id ASC LIMIT 1",
+      account.id,
+    );
+    if (anchor) {
+      await db.run(
+        "INSERT INTO payments (shop_id, account_id, amount, days_added, created_at) VALUES ($1, $2, $3, $4, $5)",
+        anchor.id, account.id, price, days, now,
+      );
+      await upsertPaymentEvent({
+        account_id: account.id,
+        shop_id: anchor.id,
+        amount: price,
+        provider: "manual",
+        reference: `custom-${account.id}-${now}`,
+        status: "confirmed",
+        source: "manual",
+        received_at: now,
+        note: str(req.body?.reason) || "Option sur-mesure",
+      });
+    }
+  }
+
+  await logAdminAction(req, "account", account.id, "custom_option", req.body?.reason ? str(req.body.reason) : null);
+  await logActivity(
+    "info",
+    "account",
+    "Option sur-mesure appliquée",
+    [
+      `${account.name} —`,
+      extraDevices ? `+${extraDevices} écran(s)` : null,
+      price ? `${price.toLocaleString("fr-FR")} F` : null,
+      days ? `+${days} j` : null,
+    ].filter(Boolean).join(" "),
+    { account_id: account.id },
+    null,
+    account.id,
+  );
+  res.json({ ok: true, account: await publicAccount(await accountById(account.id)) });
 });
 
 router.post("/api/v1/admin/clients/:id/extend", requireAdmin, async (req, res) => {
@@ -1023,46 +950,6 @@ router.post("/api/v1/admin/shops/:device_id/release-fingerprint", requireAdmin, 
   res.json({ ok: true, shop: publicShop(await byId(shop.id)) });
 });
 
-// ── Revenue by tier amélioré (période configurable) ────────────────────────────────
-router.get("/api/v1/admin/revenue-timeseries", requireAdmin, async (req, res) => {
-  const period = str(req.query.period) || "30d"; // 7d, 30d, 3m, 12m
-  let days;
-  if (period === "7d") days = 7;
-  else if (period === "30d") days = 30;
-  else if (period === "3m") days = 90;
-  else if (period === "12m") days = 365;
-  else days = 30;
-
-  const startMs = Date.now() - days * DAY_MS;
-  const row = await db.all("SELECT amount, created_at FROM payments WHERE created_at >= $1 ORDER BY created_at ASC", startMs);
-
-  // Grouper par jour
-  const byDay = new Map();
-  for (const p of row) {
-    const d = new Date(p.created_at).toISOString().slice(0, 10);
-    byDay.set(d, (byDay.get(d) ?? 0) + p.amount);
-  }
-
-  const result = Array.from(byDay.entries()).map(([day, revenue]) => ({ day, revenue }));
-
-  // Revenus par abonnement (compte) et par boutique
-  const byAccount = await db.all(
-    `SELECT a.name, COALESCE(SUM(p.amount), 0) AS total
-     FROM payments p JOIN accounts a ON p.account_id = a.id
-     WHERE p.created_at >= $1 GROUP BY a.id, a.name ORDER BY total DESC LIMIT 10`,
-    startMs,
-  );
-
-  const byShop = await db.all(
-    `SELECT s.store_name, COALESCE(SUM(p.amount), 0) AS total
-     FROM payments p JOIN shops s ON p.shop_id = s.id
-     WHERE p.created_at >= $1 GROUP BY s.id, s.store_name ORDER BY total DESC LIMIT 10`,
-    startMs,
-  );
-
-  res.json({ period, days, by_day: result, by_account: byAccount, by_shop: byShop });
-});
-
 // ── Revenue summary (aujourd'hui / semaine / mois / année / récurrent / en attente) ─
 router.get("/api/v1/admin/revenue-summary", requireAdmin, async (req, res) => {
   const now = Date.now();
@@ -1086,7 +973,7 @@ router.get("/api/v1/admin/revenue-summary", requireAdmin, async (req, res) => {
     .reduce((sum, a) => sum + priceForDevices(a.max_devices), 0);
 
   // Paiements en attente
-  const pendingSms = (await db.get("SELECT COUNT(*) AS c FROM sms_payments WHERE status IN ('pending','unmatched')")).c;
+  const pendingSms = (await db.get("SELECT COUNT(*) AS c FROM sms_payments WHERE status = 'pending'")).c;
   const pendingRequests = (await db.get("SELECT COUNT(*) AS c FROM subscription_requests WHERE status = 'pending'")).c;
   const pendingEventPayments = (await db.get("SELECT COUNT(*) AS c FROM payment_events WHERE status = 'pending'")).c;
 

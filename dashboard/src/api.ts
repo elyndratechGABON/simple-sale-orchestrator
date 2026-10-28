@@ -46,51 +46,6 @@ export interface AdminCommand {
   superseded_at?: number | null;
 }
 
-export interface Shop {
-  id: number;
-  device_id: string;
-  owner_name: string;
-  store_name: string;
-  phone: string | null;
-  location: string | null;
-  registration_date: number;
-  expiry_date: number;
-  suspended_at: number | null;
-  app_version_used: string | null;
-  app_origin: string;
-  last_sync_at: number | null;
-  payments: number;
-  status: "active" | "suspended" | "expired";
-  last_command: AdminCommand | null;
-  expired_commands: number;
-}
-
-export interface Config {
-  price_per_month_fcfa: number;
-  trial_days: number;
-  project: string | null;
-}
-
-export interface Project {
-  id: string;
-  name: string;
-  created_at: number;
-  shop_count: number;
-  type: string | null;
-  price_per_month_fcfa: number | null;
-  trial_days: number | null;
-  from_manifest: boolean;
-}
-
-export interface Payment {
-  id: number;
-  shop_id: number;
-  account_id: number | null;
-  amount: number;
-  days_added: number;
-  created_at: number;
-}
-
 export interface AccountDevice {
   device_id: string;
   store_name: string;
@@ -152,81 +107,14 @@ export interface DeleteRequest {
   shop_account_id: number | null;
 }
 
-export interface BusinessTotals {
-  revenue: number;
-  profit: number;
-  sales: number;
-  items: number;
-  customers: number;
-}
-
-export interface TopProduct {
-  name: string;
-  quantity: number;
-  revenue: number;
-}
-
-export interface DayPoint {
-  day: number;
-  revenue: number;
-  profit: number;
-  sales: number;
-}
-
-export interface Subscriptions {
-  total: number;
-  active: number;
-  grace: number;
-  suspended: number;
-  expired: number;
-  online: number;
-  expiring_7d: number;
-  expiring_30d: number;
-  grace_ending_2d: number;
-  mrr_fcfa: number;
-}
-
-export interface ShopStats {
-  device_id: string;
-  store_name: string;
-  last_sync_at: number;
-  totals: BusinessTotals;
-  top_products: TopProduct[];
-  by_day: DayPoint[];
-}
-
-export interface Stats {
-  project: string | null;
-  generated_at: number | null;
-  subscriptions: Subscriptions;
-  totals: BusinessTotals;
-  top_products: TopProduct[];
-  by_day: DayPoint[];
-  shops: ShopStats[];
-}
-
-export interface TierRevenueMonth {
-  month: string;
-  tier_10k: number;
-  tier_25k: number;
-  tier_50k: number;
-  other: number;
-  total: number;
-}
-
-export interface RetentionMonth {
-  month: string;
-  active: number;
-  new: number;
-  churned: number;
-  retention_pct: number;
-}
-
-export interface ForecastMonth {
-  month: string;
-  mrr_fcfa: number;
-  churn_fcfa: number;
-  renewal_rate: number;
+export interface RevenueSummary {
+  today: number;
+  week: number;
+  month: number;
+  year: number;
+  recurring_mrr: number;
+  pending: number;
+  confirmed: number;
 }
 
 export interface SmsPayment {
@@ -235,7 +123,9 @@ export interface SmsPayment {
   name: string;
   amount_fcfa: number;
   tid: string;
-  status: "pending" | "matched" | "unmatched" | "duplicate" | "processed";
+  status: "pending" | "matched" | "unmatched" | "duplicate" | "processed" | "rejected";
+  /** Le SMS BRUT envoyé par le client (montant illisible ? on le lit avant de valider). */
+  raw_sms: string | null;
   error: string | null;
   received_at: number;
   processed_at: number | null;
@@ -309,65 +199,6 @@ export interface Storefront {
   shops: StorefrontShop[];
 }
 
-export interface Overview {
-  generated_at: number;
-  kpi: {
-    revenue_today: number;
-    revenue_week: number;
-    revenue_month: number;
-    revenue_year: number;
-    clients: number;
-    clients_new_today: number;
-    shops: number;
-    shops_active: number;
-    subscriptions_active: number;
-    subscriptions_expired: number;
-    devices_connected: number;
-    devices_total: number;
-    payments_month: number;
-    payments_confirmed: number;
-    payments_pending: number;
-    mrr: number;
-    arr: number;
-  };
-  business: {
-    elyndra_revenue: { today: number; week: number; month: number; year: number; mrr: number; arr: number };
-    shop_revenue: { today: number; week: number; month: number; year: number; total_revenue: number; total_sales: number; total_profit: number };
-  };
-  subscriptions: Subscriptions;
-  shop_stats: Stats;
-}
-
-export interface Client {
-  id: number;
-  name: string;
-  owner_name: string;
-  phone: string | null;
-  email: string | null;
-  max_devices: number;
-  expiry_date: number;
-  suspended_at: number | null;
-  status: string;
-  monthly_price_fcfa: number;
-  online: boolean;
-  device_count: number;
-  shop_count: number;
-  last_activity: number | null;
-  next_payment: number;
-  created_at: number;
-  devices: { device_id: string; store_name: string; app_version_used: string | null; last_sync_at: number | null; status: string }[];
-}
-
-export interface ClientDetail {
-  client: any;
-  subscription: any;
-  shops: any[];
-  payments: any;
-  payment_events: any[];
-  commands: any[];
-  activity: any[];
-}
-
 export interface ShopDevice {
   device_id: string;
   store_name: string;
@@ -414,32 +245,6 @@ export interface ShopFull {
   stats: any;
 }
 
-export interface Device {
-  device_id: string;
-  store_name: string;
-  owner_name: string;
-  phone: string | null;
-  shop_id: number;
-  account_id: number | null;
-  app_origin: string;
-  role: string;
-  status: string;
-  last_sync_at: number | null;
-  app_version_used: string | null;
-  registration_date: number;
-  expiry_date: number;
-  suspended_at: number | null;
-  sync_pending: number;
-}
-
-export interface DevicesSummary {
-  total: number;
-  online: number;
-  offline: number;
-  sync_pending: number;
-  versions: Record<string, number>;
-}
-
 export interface SyncStatus {
   device_id: string;
   store_name: string;
@@ -449,19 +254,6 @@ export interface SyncStatus {
   operations_count: number;
   pending: number;
   errors: number;
-}
-
-export interface ActivityEvent {
-  id: number;
-  level: string;
-  category: string;
-  title: string;
-  detail: string | null;
-  data: any;
-  shop_id: number | null;
-  account_id: number | null;
-  project_id: string | null;
-  created_at: number;
 }
 
 export interface AuditAction {
@@ -489,24 +281,6 @@ export interface PaymentEvent {
   confirmed_at: number | null;
   note: string | null;
   created_at: number;
-}
-
-export interface RevenueTimeseries {
-  period: string;
-  days: number;
-  by_day: { day: string; revenue: number }[];
-  by_account: { name: string; total: number }[];
-  by_shop: { store_name: string; total: number }[];
-}
-
-export interface RevenueSummary {
-  today: number;
-  week: number;
-  month: number;
-  year: number;
-  recurring_mrr: number;
-  pending: number;
-  confirmed: number;
 }
 
 export interface StatusEvent {
@@ -557,53 +331,12 @@ export function login(
   });
 }
 
-export function fetchConfig(project?: string): Promise<Config> {
-  return request(`/api/config${project ? `?project=${encodeURIComponent(project)}` : ""}`);
-}
-
 export function fetchPublicProjects(): Promise<{ projects: { id: string; name: string }[] }> {
   return request("/api/v1/public/projects");
 }
 
-export function fetchShops(project?: string): Promise<{ shops: Shop[] }> {
-  return request(`/api/v1/admin/shops${project ? `?project=${encodeURIComponent(project)}` : ""}`);
-}
-
-export function fetchStats(project?: string): Promise<Stats> {
-  return request(`/api/v1/admin/stats${project ? `?project=${encodeURIComponent(project)}` : ""}`);
-}
-
-export function fetchCommandHistory(deviceId: string): Promise<{ commands: AdminCommand[] }> {
-  return request(`/api/v1/admin/shops/${encodeURIComponent(deviceId)}/commands`);
-}
-
-export function fetchPayments(deviceId: string): Promise<{ payments: Payment[] }> {
-  return request(`/api/v1/admin/shops/${encodeURIComponent(deviceId)}/payments`);
-}
-
-export function sendCommand(
-  deviceId: string,
-  body:
-    | { action_type: "suspend" }
-    | { action_type: "renew"; days?: number; amount_fcfa?: number }
-    | { action_type: "broadcast_message"; message: string },
-): Promise<{ command: AdminCommand }> {
-  return request("/api/v1/admin/commands", {
-    method: "POST",
-    body: JSON.stringify({ device_id: deviceId, ...body }),
-  });
-}
-
 export function fetchAccounts(project?: string): Promise<{ accounts: Account[] }> {
   return request(`/api/v1/admin/accounts${project ? `?project=${encodeURIComponent(project)}` : ""}`);
-}
-
-export function fetchAccountPayments(accountId: number): Promise<{ payments: Payment[] }> {
-  return request(`/api/v1/admin/accounts/${accountId}/payments`);
-}
-
-export function fetchAccountCommands(accountId: number): Promise<{ commands: AdminCommand[] }> {
-  return request(`/api/v1/admin/accounts/${accountId}/commands`);
 }
 
 export function setAccountPassword(accountId: number, password: string): Promise<{ ok: boolean }> {
@@ -709,41 +442,6 @@ export function deleteAccount(accountId: number): Promise<{ ok: boolean; account
   return request(`/api/v1/admin/accounts/${accountId}`, { method: "DELETE" });
 }
 
-export function fetchProjects(): Promise<{ projects: Project[] }> {
-  return request("/api/v1/admin/projects");
-}
-
-export function createProject(
-  id: string,
-  name: string,
-  password: string,
-  type?: string,
-  price?: number,
-  trial?: number,
-): Promise<{ project: Project }> {
-  return request("/api/v1/admin/projects", {
-    method: "POST",
-    body: JSON.stringify({ id, name, password, type, price_per_month_fcfa: price, trial_days: trial }),
-  });
-}
-
-export function setProjectPassword(id: string, password: string): Promise<{ ok: boolean }> {
-  return request(`/api/v1/admin/projects/${encodeURIComponent(id)}/password`, {
-    method: "POST",
-    body: JSON.stringify({ password }),
-  });
-}
-
-export function setProjectConfig(
-  id: string,
-  cfg: { type?: string; price_per_month_fcfa?: number; trial_days?: number },
-): Promise<{ ok: boolean; project: Project }> {
-  return request(`/api/v1/admin/projects/${encodeURIComponent(id)}/config`, {
-    method: "POST",
-    body: JSON.stringify(cfg),
-  });
-}
-
 export function subscribeStatus(onEvent: (evt: LiveEvent) => void): () => void {
   const es = new EventSource(`/api/events?token=${encodeURIComponent(getToken())}`);
   es.onmessage = (e) => {
@@ -759,24 +457,6 @@ export function subscribeStatus(onEvent: (evt: LiveEvent) => void): () => void {
   return () => es.close();
 }
 
-export function fetchRevenueByTier(): Promise<{ months: TierRevenueMonth[] }> {
-  return request("/api/v1/admin/revenue-by-tier");
-}
-
-export function fetchRetention(): Promise<{ months: RetentionMonth[] }> {
-  return request("/api/v1/admin/retention");
-}
-
-export function fetchForecast(renewalRate?: number): Promise<{ current_mrr_fcfa: number; forecast: ForecastMonth[] }> {
-  const qs = renewalRate != null ? `?renewal_rate=${renewalRate}` : "";
-  return request(`/api/v1/admin/forecast${qs}`);
-}
-
-export function fetchSmsPayments(status?: string): Promise<{ payments: SmsPayment[] }> {
-  const qs = status ? `?status=${encodeURIComponent(status)}` : "";
-  return request(`/api/v1/admin/sms-payments${qs}`);
-}
-
 export function processSmsPayment(id: number, accountId: number): Promise<{ ok: boolean }> {
   return request(`/api/v1/admin/sms-payments/${id}/process`, {
     method: "POST",
@@ -784,20 +464,17 @@ export function processSmsPayment(id: number, accountId: number): Promise<{ ok: 
   });
 }
 
-export function fetchOverview(project?: string): Promise<Overview> {
-  return request(`/api/v1/admin/overview${project ? `?project=${encodeURIComponent(project)}` : ""}`);
+/** Rejeter un SMS de paiement : il sort de la file d'attente, AUCUN abonnement n'est
+ *  touché (un SMS n'est jamais un renouvellement automatique). */
+export function rejectSmsPayment(id: number, reason?: string): Promise<{ ok: boolean }> {
+  return request(`/api/v1/admin/sms-payments/${id}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
 }
 
 export function fetchStorefront(project?: string): Promise<Storefront> {
   return request(`/api/v1/admin/storefront${project ? `?project=${encodeURIComponent(project)}` : ""}`);
-}
-
-export function fetchClients(project?: string): Promise<{ clients: Client[] }> {
-  return request(`/api/v1/admin/clients${project ? `?project=${encodeURIComponent(project)}` : ""}`);
-}
-
-export function fetchClient(id: number): Promise<ClientDetail> {
-  return request(`/api/v1/admin/clients/${id}`);
 }
 
 export function fetchShopsDetail(project?: string): Promise<{ shops: ShopDetail[] }> {
@@ -808,20 +485,38 @@ export function fetchShopDetail(deviceId: string): Promise<ShopFull> {
   return request(`/api/v1/admin/shops-detail/${encodeURIComponent(deviceId)}`);
 }
 
+export interface Device {
+  device_id: string;
+  store_name: string;
+  owner_name: string;
+  phone: string | null;
+  shop_id: number;
+  account_id: number | null;
+  app_origin: string;
+  role: string;
+  status: string;
+  last_sync_at: number | null;
+  app_version_used: string | null;
+  registration_date: number;
+  expiry_date: number;
+  suspended_at: number | null;
+  sync_pending: number;
+}
+
+export interface DevicesSummary {
+  total: number;
+  online: number;
+  offline: number;
+  sync_pending: number;
+  versions: Record<string, number>;
+}
+
 export function fetchDevices(project?: string): Promise<{ devices: Device[]; summary: DevicesSummary }> {
   return request(`/api/v1/admin/devices${project ? `?project=${encodeURIComponent(project)}` : ""}`);
 }
 
 export function fetchSync(project?: string): Promise<{ connected: number; total: number; status: SyncStatus[]; recent_syncs: any[]; pending_commands: number }> {
   return request(`/api/v1/admin/sync${project ? `?project=${encodeURIComponent(project)}` : ""}`);
-}
-
-export function fetchActivity(opts?: { limit?: number; category?: string; level?: string }): Promise<{ events: ActivityEvent[] }> {
-  const qs = new URLSearchParams();
-  if (opts?.limit) qs.set("limit", String(opts.limit));
-  if (opts?.category) qs.set("category", opts.category);
-  if (opts?.level) qs.set("level", opts.level);
-  return request(`/api/v1/admin/activity${qs.size ? `?${qs}` : ""}`);
 }
 
 export function fetchAudit(opts?: { limit?: number; target_type?: string }): Promise<{ actions: AuditAction[] }> {
@@ -835,40 +530,8 @@ export function fetchPaymentsView(project?: string): Promise<{ payments: any[]; 
   return request(`/api/v1/admin/payments-view${project ? `?project=${encodeURIComponent(project)}` : ""}`);
 }
 
-export function fetchRevenueTimeseries(period?: string): Promise<RevenueTimeseries> {
-  return request(`/api/v1/admin/revenue-timeseries${period ? `?period=${encodeURIComponent(period)}` : ""}`);
-}
-
 export function fetchRevenueSummary(): Promise<RevenueSummary> {
   return request("/api/v1/admin/revenue-summary");
-}
-
-export function suspendClient(id: number, reason?: string): Promise<any> {
-  return request(`/api/v1/admin/clients/${id}/suspend`, {
-    method: "POST",
-    body: JSON.stringify({ reason }),
-  });
-}
-
-export function activateClient(id: number, reason?: string): Promise<any> {
-  return request(`/api/v1/admin/clients/${id}/activate`, {
-    method: "POST",
-    body: JSON.stringify({ reason }),
-  });
-}
-
-export function changeClientPlan(id: number, opts: { days?: number; amount_fcfa?: number }): Promise<any> {
-  return request(`/api/v1/admin/clients/${id}/plan`, {
-    method: "POST",
-    body: JSON.stringify(opts),
-  });
-}
-
-export function extendClient(id: number, amount_fcfa: number): Promise<any> {
-  return request(`/api/v1/admin/clients/${id}/extend`, {
-    method: "POST",
-    body: JSON.stringify({ amount_fcfa }),
-  });
 }
 
 /**
@@ -894,23 +557,15 @@ export function revokeDevice(deviceId: string, reason?: string): Promise<any> {
   });
 }
 
-export function forceSync(deviceId: string, message?: string): Promise<any> {
-  return request(`/api/v1/admin/devices/${encodeURIComponent(deviceId)}/force-sync`, {
+/** OPTION SUR-MESURE : au-delà des paliers (Essentiel/Confort/Affluence), pour les
+ *  clients généreux — +N appareils au quota ACTUEL (pas un palier), un prix LIBRE,
+ *  une durée en jours. Tout est optionnel mais au moins une des trois valeurs. */
+export function setAccountCustom(
+  accountId: number,
+  body: { extra_devices?: number; price_fcfa?: number; days?: number; reason?: string },
+): Promise<{ ok: boolean; account: Account }> {
+  return request(`/api/v1/admin/accounts/${accountId}/custom`, {
     method: "POST",
-    body: JSON.stringify({ message }),
-  });
-}
-
-export function deactivateShop(deviceId: string, reason?: string): Promise<any> {
-  return request(`/api/v1/admin/shops/${encodeURIComponent(deviceId)}/deactivate`, {
-    method: "POST",
-    body: JSON.stringify({ reason }),
-  });
-}
-
-export function reactivateShop(deviceId: string, reason?: string): Promise<any> {
-  return request(`/api/v1/admin/shops/${encodeURIComponent(deviceId)}/reactivate`, {
-    method: "POST",
-    body: JSON.stringify({ reason }),
+    body: JSON.stringify(body),
   });
 }

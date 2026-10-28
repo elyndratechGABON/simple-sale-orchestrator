@@ -1,17 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { AuthError, clearToken, getToken, getScope, getProjectName, login as apiLogin, fetchPublicProjects, subscribeStatus, type RequestCreatedEvent, type LiveEvent } from "./api";
 import { Layout, type Page } from "./components/Layout";
-import { Dashboard } from "./pages/Dashboard";
-import { Clients } from "./pages/Clients";
-import { ClientDetail } from "./pages/ClientDetail";
+import { TableauBord } from "./pages/TableauBord";
 import { Boutiques } from "./pages/Boutiques";
 import { BoutiqueDetail } from "./pages/BoutiqueDetail";
-import { Abonnements } from "./pages/Abonnements";
-import { Paiements } from "./pages/Paiements";
-import { Appareils } from "./pages/Appareils";
-import { Synchronisation } from "./pages/Synchronisation";
-import { Activite } from "./pages/Activite";
-import { Audit } from "./pages/Audit";
+import { Facturation } from "./pages/Facturation";
+import { Systeme } from "./pages/Systeme";
 import { StoreIcon } from "./icons";
 
 function Login({ onLogin }: { onLogin: () => void }) {
@@ -79,7 +73,7 @@ function Login({ onLogin }: { onLogin: () => void }) {
 
 function App() {
   const [token, setToken] = useState<string | null>(() => getToken() || null);
-  const [page, setPage] = useState<Page>("dashboard");
+  const [page, setPage] = useState<Page>("tableau");
   const [selectedId, setSelectedId] = useState<string | number | null>(null);
   const [dark, setDark] = useState(() => localStorage.getItem("orch_dark") === "1");
   const [requestAlert, setRequestAlert] = useState<RequestCreatedEvent | null>(null);
@@ -123,11 +117,6 @@ function App() {
 
   if (!token) return <Login onLogin={() => setToken(getToken())} />;
 
-  const navigateToDetail = (id: number, detailPage: Page) => {
-    setSelectedId(id);
-    setPage(detailPage);
-  };
-
   const handleBack = (listPage: Page) => {
     setSelectedId(null);
     setPage(listPage);
@@ -141,7 +130,7 @@ function App() {
       pendingCount={pendingCount}
       dark={dark}
       onNavigate={(p) => {
-        if (p !== "client" && p !== "boutique") setSelectedId(null);
+        if (p !== "boutique") setSelectedId(null);
         setPage(p);
       }}
       onLogout={logout}
@@ -155,7 +144,7 @@ function App() {
           </span>
           <button
             className="btn btn-ghost btn-sm"
-            onClick={() => { setPage("abonnements"); setRequestAlert(null); }}
+            onClick={() => { setPage("facturation"); setRequestAlert(null); }}
             style={{ marginLeft: "auto" }}
           >
             Voir
@@ -163,21 +152,13 @@ function App() {
         </div>
       )}
 
-      {page === "dashboard" && <Dashboard />}
-      {page === "clients" && <Clients onSelect={(id) => navigateToDetail(id, "client")} />}
-      {page === "client" && selectedId != null && (
-        <ClientDetail id={selectedId as number} onBack={() => handleBack("clients")} />
-      )}
+      {page === "tableau" && <TableauBord />}
       {page === "boutiques" && <Boutiques onSelect={(deviceId) => { setSelectedId(deviceId); setPage("boutique"); }} />}
       {page === "boutique" && selectedId != null && (
         <BoutiqueDetail deviceId={selectedId as string} onBack={() => handleBack("boutiques")} />
       )}
-      {page === "abonnements" && <Abonnements />}
-      {page === "paiements" && <Paiements />}
-      {page === "appareils" && <Appareils />}
-      {page === "sync" && <Synchronisation />}
-      {page === "activite" && <Activite />}
-      {page === "audit" && scope === "master" && <Audit />}
+      {page === "facturation" && <Facturation />}
+      {page === "systeme" && <Systeme isMaster={scope === "master"} />}
     </Layout>
   );
 }

@@ -149,7 +149,7 @@ pg.types.setTypeParser(pg.types.builtins.INT4, (v) => (v === null ? null : Numbe
 
 export const pool = new pg.Pool({
   connectionString: DATABASE_URL,
-  max: 10,
+  max: 1,      // ← Correction pour Vercel serverless : une connexion par invocation
   idleTimeoutMillis: 30_000,
 });
 
@@ -245,7 +245,11 @@ async function applySchema(sql) {
   for (const raw of sql.split(";\n")) {
     const stmt = raw.replace(/^--[^\n]*\n?/gm, "").trim();
     if (!stmt || !MIGRATION_STATEMENT_RE.test(stmt)) continue;
-    await pool.query(stmt);
+    try {
+      await pool.query(stmt);
+    } catch (err) {
+      console.warn("Schema update skipped:", err.message);
+    }
   }
 }
 

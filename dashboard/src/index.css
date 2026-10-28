@@ -508,6 +508,85 @@ button {
 .stat .v.danger { color: var(--danger); }
 .stat .v.accent { color: var(--accent); }
 
+/* ---- Cartes KPI (Tableau de bord) : 4 grands chiffres, lisibles d'un coup d'œil ---- */
+
+.kpi-grid {
+  display: grid;
+  /* 4 cartes sur une ligne sur grand écran, 2×2 en dessous, 1 sur mobile.
+     Un `auto-fit` les cassait en 3+1 sur un viewport intermédiaire. */
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+@media (max-width: 1280px) {
+  .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 700px) {
+  .kpi-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+.kpi-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 18px 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.kpi-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.kpi-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--bg, #f3f4f6);
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+.kpi-icon.accent { background: var(--accent-soft); color: var(--accent); }
+.kpi-icon.ok { background: var(--ok-soft); color: var(--ok); }
+.kpi-icon.warn { background: var(--warn-soft); color: var(--warn); }
+.kpi-icon.danger { background: var(--danger-soft); color: var(--danger); }
+
+.kpi-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.kpi-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 30px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+.kpi-value.ok { color: var(--ok); }
+.kpi-value.warn { color: var(--warn); }
+.kpi-value.danger { color: var(--danger); }
+.kpi-value.accent { color: var(--accent); }
+
+.kpi-sub {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
 /* ---- Alertes ---- */
 
 .alert-banner {
@@ -1493,7 +1572,9 @@ tbody tr:hover {
 
 /* ── Paiements SMS (auto-renouvellement) ────────────────────────────────────────── */
 
-.sms-panel .sms-group-title {
+/* Le titre de groupe sert aussi hors du panneau SMS (page Facturation) : il doit
+   rester aligné dans les deux cas. */
+.sms-group-title {
   font-size: 12px;
   font-weight: 600;
   color: var(--muted);
