@@ -80,6 +80,8 @@ export function Boutiques({ onSelect }: Props) {
   const [customJours, setCustomJours] = useState("");
   // Changement de mot de passe du compte (support : le patron l'a perdu).
   const [nouveauMotDePasse, setNouveauMotDePasse] = useState("");
+  // Menu « ⋯ » d'actions secondaires, UNE seule carte à la fois (identifiant compte).
+  const [menuOuvertId, setMenuOuvertId] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -554,88 +556,134 @@ export function Boutiques({ onSelect }: Props) {
                   )}
                 </ul>
 
-                <footer className="bc-pied">
+                <footer className="bc-pied bc-actions-footer">
                   {s.account_id != null && (
                     <>
-                      {/* Le [+] du cahier des charges : ouvrir une place de plus pour un
-                          employé (le prix et la durée restent libres). */}
-                      <button
-                        className="btn btn-sm btn-primary"
-                        onClick={() => {
-                          setCustomPour(s);
-                          setCustomDevices("1");
-                          setCustomPrix("");
-                          setCustomJours("");
-                        }}
-                        disabled={busy}
-                        title="Ajouter un employé (une place de plus)"
-                      >
-                        <PlusIcon size={13} />
-                        Ajouter un employé
-                      </button>
-                      <button
-                        className="btn btn-sm"
-                        onClick={() => setPlanPour(s)}
-                        disabled={busy}
-                        title="Changer l'abonnement (nombre de places)"
-                      >
-                        <BanknoteIcon size={13} />
-                        Gérer l&apos;abonnement
-                      </button>
-                      <button
-                        className="btn btn-sm btn-ghost"
-                        onClick={() => {
-                          setAccesPour(s);
-                          setDeviceIdRattache("");
-                        }}
-                        disabled={busy}
-                        title="Gérer les accès : attacher, révoquer, changer le mot de passe"
-                      >
-                        <SmartphoneIcon size={13} />
-                        Accès
-                      </button>
-                      <button
-                        className="btn btn-sm btn-ghost"
-                        onClick={() => {
-                          setMessagePour(s);
-                          setMessageTexte("");
-                        }}
-                        disabled={busy}
-                        title="Envoyer un message au patron"
-                      >
-                        <SendIcon size={13} />
-                        Message
-                      </button>
-                      <button
-                        className="btn btn-sm btn-ghost"
-                        onClick={() => handleToggleSuspend(s)}
-                        disabled={busy}
-                        title={
-                          s.status === "suspended"
-                            ? "Réactiver cette boutique"
-                            : "Suspendre cette boutique (l'accès est coupé, les données restent)"
-                        }
-                      >
-                        {s.status === "suspended" ? (
+                      <div className="row-actions">
+                        {/* Le [+] du cahier des charges : ouvrir une place de plus pour un
+                            employé (le prix et la durée restent libres). */}
+                        <button
+                          className="btn btn-sm btn-primary"
+                          onClick={() => {
+                            setCustomPour(s);
+                            setCustomDevices("1");
+                            setCustomPrix("");
+                            setCustomJours("");
+                          }}
+                          disabled={busy}
+                          title="Ajouter un employé (une place de plus)"
+                        >
+                          <PlusIcon size={13} />
+                          Ajouter un employé
+                        </button>
+                        <button
+                          className="btn btn-sm"
+                          onClick={() => onSelect(s.device_id || employes[0]?.device_id || "")}
+                          disabled={!s.device_id && employes.length === 0}
+                          title="Voir la fiche détaillée de cette boutique"
+                        >
+                          Détails
+                        </button>
+                      </div>
+                      {/* Les 4 actions secondaires (abonnement, accès, message,
+                          suspension, suppression) vivent dans un menu « ⋯ » — 7 boutons
+                          affichés côte à côte ne se lisaient plus (audit design §3). */}
+                      <div className="bc-more">
+                        {menuOuvertId === String(s.account_id) && (
                           <>
-                            <AlertIcon size={13} />
-                            Réactiver
-                          </>
-                        ) : (
-                          <>
-                            <LockIcon size={13} />
-                            Suspendre
+                            <button
+                              className="bc-menu-backdrop"
+                              aria-label="Fermer le menu"
+                              onClick={() => setMenuOuvertId(null)}
+                            />
+                            <div className="bc-menu" role="menu">
+                              <button
+                                role="menuitem"
+                                className="btn btn-ghost"
+                                onClick={() => {
+                                  setMenuOuvertId(null);
+                                  setPlanPour(s);
+                                }}
+                                disabled={busy}
+                              >
+                                <BanknoteIcon size={13} />
+                                Gérer l&apos;abonnement
+                              </button>
+                              <button
+                                role="menuitem"
+                                className="btn btn-ghost"
+                                onClick={() => {
+                                  setMenuOuvertId(null);
+                                  setAccesPour(s);
+                                  setDeviceIdRattache("");
+                                }}
+                                disabled={busy}
+                              >
+                                <SmartphoneIcon size={13} />
+                                Accès
+                              </button>
+                              <button
+                                role="menuitem"
+                                className="btn btn-ghost"
+                                onClick={() => {
+                                  setMenuOuvertId(null);
+                                  setMessagePour(s);
+                                  setMessageTexte("");
+                                }}
+                                disabled={busy}
+                              >
+                                <SendIcon size={13} />
+                                Message au patron
+                              </button>
+                              <button
+                                role="menuitem"
+                                className="btn btn-ghost"
+                                onClick={() => {
+                                  setMenuOuvertId(null);
+                                  void handleToggleSuspend(s);
+                                }}
+                                disabled={busy}
+                              >
+                                {s.status === "suspended" ? (
+                                  <>
+                                    <AlertIcon size={13} />
+                                    Réactiver
+                                  </>
+                                ) : (
+                                  <>
+                                    <LockIcon size={13} />
+                                    Suspendre
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                role="menuitem"
+                                className="btn btn-ghost text-destructive hover:text-destructive"
+                                onClick={() => {
+                                  setMenuOuvertId(null);
+                                  handleDeleteAccount(s.account_id!, s.account_name || `compte #${s.account_id}`);
+                                }}
+                                disabled={deleting === `account-${s.account_id}` || busy}
+                              >
+                                {deleting === `account-${s.account_id}` ? "⏳" : "🗑"}
+                                Supprimer la boutique
+                              </button>
+                            </div>
                           </>
                         )}
-                      </button>
-                      <button
-                        className="btn btn-sm btn-ghost text-destructive hover:text-destructive"
-                        onClick={() => handleDeleteAccount(s.account_id!, s.account_name || `compte #${s.account_id}`)}
-                        disabled={deleting === `account-${s.account_id}` || busy}
-                        title="Supprimer toute la boutique (compte + tous ses écrans)"
-                      >
-                        {deleting === `account-${s.account_id}` ? "⏳" : "🗑"}
-                      </button>
+                        <button
+                          className="btn btn-ghost btn-icon"
+                          aria-label="Autres actions"
+                          aria-expanded={menuOuvertId === String(s.account_id)}
+                          onClick={() =>
+                            setMenuOuvertId(
+                              menuOuvertId === String(s.account_id) ? null : String(s.account_id),
+                            )
+                          }
+                        >
+                          <span aria-hidden>⋯</span>
+                        </button>
+                      </div>
                     </>
                   )}
                   {s.account_id == null && (
