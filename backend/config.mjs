@@ -46,7 +46,10 @@ export const OPS_DRAIN_INTERVAL_MS = Number(process.env.OPS_DRAIN_INTERVAL_MS ??
 // Les deux, jamais un seul.
 export const OPS_DRAIN_ENABLED = process.env.OPS_DRAIN_ENABLED === "true";
 export const PRICE_PER_MONTH_FCFA = Number(process.env.PRICE_PER_MONTH_FCFA ?? 10_000);
-export const TRIAL_DAYS = Number(process.env.TRIAL_DAYS ?? 30);
+// Essai de 14 jours — aligné sur la caisse (src/lib/db/shop.ts) et le discours de la
+// landing (« 14 jours d'essai gratuit »). Le serveur est la VÉRITÉ : c'est lui qui pose
+// l'échéance à l'inscription (lib.mjs : registered_at + TRIAL_DAYS * DAY_MS).
+export const TRIAL_DAYS = Number(process.env.TRIAL_DAYS ?? 14);
 // ── Paliers d'abonnement ───────────────────────────────────────────────────────────
 // Un paiement couvre 30 jours et fixe le nombre d'appareils du compte. Configurable par
 // env : PRICE_TIERS="10000:3,25000:5,50000:9". Le tarif historique PRICE_PER_MONTH_FCFA

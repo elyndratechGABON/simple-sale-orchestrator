@@ -4,7 +4,7 @@
   "type": "pos",
   "pricing": {
     "price_per_month_fcfa": 10000,
-    "trial_days": 30
+    "trial_days": 14
   },
   "period_days": 7,
   "metrics": [
