@@ -735,6 +735,34 @@ button {
   padding-top: 12px;
 }
 
+/* ---- Cartes boutique : sur téléphone, une colonne et des lignes d'employé qui
+   s'enroulent (nom tronqué, présence et actions passent en dessous) ---- */
+
+@media (max-width: 520px) {
+  .boutiques-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .boutique-card {
+    padding: 14px;
+  }
+
+  .bc-employes li {
+    flex-wrap: wrap;
+    row-gap: 3px;
+  }
+
+  .bc-emp-nom {
+    flex: 1 1 120px;
+  }
+
+  .presence {
+    margin-left: auto;
+    font-size: 11px;
+  }
+}
+
 /* ---- Alertes ---- */
 
 .alert-banner {
