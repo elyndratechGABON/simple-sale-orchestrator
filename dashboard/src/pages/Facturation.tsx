@@ -292,65 +292,109 @@ export function Facturation() {
             {smsRejetes > 0 ? ` (${smsRejetes} rejeté${smsRejetes > 1 ? "s" : ""} — aucun abonnement touché)` : ""}
           </div>
         ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Boutique</th>
-                  <th>Montant</th>
-                  <th>Texte du SMS</th>
-                  <th>État</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {smsEnAttente.map((p) => (
-                  <tr key={p.id}>
-                    <td className="mono">{fmtDateTime(p.received_at)}</td>
-                    <td>
-                      <div className="cell-store">
-                        <strong>{p.matched_account_name || p.name || "—"}</strong>
-                        <div className="meta">{p.phone}</div>
-                      </div>
-                    </td>
-                    <td className="mono warn">{fmtFcfa(p.amount_fcfa)}</td>
-                    <td className="mono muted" style={{ maxWidth: 260 }}>
-                      {p.raw_sms ?? "—"}
-                    </td>
-                    <td>
-                      <span className={`badge ${p.matched_account_id ? "delivered" : "pending"}`}>
-                        {p.matched_account_id ? "Reconnu" : "À relier"}
-                      </span>
-                    </td>
-                    <td>
-                      <div className="row-actions" style={{ justifyContent: "flex-end" }}>
-                        <button
-                          className="btn btn-sm btn-primary"
-                          onClick={() => {
-                            setPickFor(p);
-                            setPickAccountId(p.matched_account_id ? String(p.matched_account_id) : "");
-                          }}
-                          disabled={busy}
-                        >
-                          <CheckIcon size={13} />
-                          Valider
-                        </button>
-                        <button
-                          className="btn btn-sm btn-danger-ghost"
-                          onClick={() => handleRejectSms(p)}
-                          disabled={busy}
-                        >
-                          <XIcon size={13} />
-                          Rejeter
-                        </button>
-                      </div>
-                    </td>
+          <>
+            {/* Tableau : desktop uniquement. Sur téléphone, les colonnes de texte du SMS
+                dépassent — c'est une pile de cartes qui prend le relais. */}
+            <div className="table-wrap hidden md:block">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Boutique</th>
+                    <th>Montant</th>
+                    <th>Texte du SMS</th>
+                    <th>État</th>
+                    <th />
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {smsEnAttente.map((p) => (
+                    <tr key={p.id}>
+                      <td className="mono">{fmtDateTime(p.received_at)}</td>
+                      <td>
+                        <div className="cell-store">
+                          <strong>{p.matched_account_name || p.name || "—"}</strong>
+                          <div className="meta">{p.phone}</div>
+                        </div>
+                      </td>
+                      <td className="mono warn">{fmtFcfa(p.amount_fcfa)}</td>
+                      <td className="mono muted" style={{ maxWidth: 260 }}>
+                        {p.raw_sms ?? "—"}
+                      </td>
+                      <td>
+                        <span className={`badge ${p.matched_account_id ? "delivered" : "pending"}`}>
+                          {p.matched_account_id ? "Reconnu" : "À relier"}
+                        </span>
+                      </td>
+                      <td>
+                        <div className="row-actions" style={{ justifyContent: "flex-end" }}>
+                          <button
+                            className="btn btn-sm btn-primary"
+                            onClick={() => {
+                              setPickFor(p);
+                              setPickAccountId(p.matched_account_id ? String(p.matched_account_id) : "");
+                            }}
+                            disabled={busy}
+                          >
+                            <CheckIcon size={13} />
+                            Valider
+                          </button>
+                          <button
+                            className="btn btn-sm btn-danger-ghost"
+                            onClick={() => handleRejectSms(p)}
+                            disabled={busy}
+                          >
+                            <XIcon size={13} />
+                            Rejeter
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {/* mobile : une carte par SMS — montant et état d'abord, SMS tronqué ensuite. */}
+            <div className="pay-cards md:hidden">
+              {smsEnAttente.map((p) => (
+                <article className="pay-card" key={p.id}>
+                  <header className="pay-card-top">
+                    <strong className="mono warn">{fmtFcfa(p.amount_fcfa)}</strong>
+                    <span className={`badge ${p.matched_account_id ? "delivered" : "pending"}`}>
+                      {p.matched_account_id ? "Reconnu" : "À relier"}
+                    </span>
+                  </header>
+                  <div className="pay-card-store">
+                    <strong>{p.matched_account_name || p.name || "—"}</strong>
+                    <span className="meta mono">{p.phone}</span>
+                    <span className="meta">{fmtDateTime(p.received_at)}</span>
+                  </div>
+                  <p className="pay-card-sms">{p.raw_sms ?? "—"}</p>
+                  <div className="row-actions">
+                    <button
+                      className="btn btn-sm btn-primary"
+                      onClick={() => {
+                        setPickFor(p);
+                        setPickAccountId(p.matched_account_id ? String(p.matched_account_id) : "");
+                      }}
+                      disabled={busy}
+                    >
+                      <CheckIcon size={13} />
+                      Valider
+                    </button>
+                    <button
+                      className="btn btn-sm btn-danger-ghost"
+                      onClick={() => handleRejectSms(p)}
+                      disabled={busy}
+                    >
+                      <XIcon size={13} />
+                      Rejeter
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </>
         )}
       </section>
 
@@ -370,34 +414,57 @@ export function Facturation() {
               Aucun abonnement actif.
             </div>
           ) : (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Boutique</th>
-                    <th>Patron</th>
-                    <th>Téléphone</th>
-                    <th>Palier</th>
-                    <th>Échéance</th>
-                    <th>Statut</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {[...abonnes]
-                    .sort((a, b) => a.expiry_date - b.expiry_date)
-                    .map((a) => (
-                      <tr key={a.id}>
-                        <td className="cell-store"><strong>{a.name}</strong></td>
-                        <td>{a.owner_name || "—"}</td>
-                        <td className="mono">{a.phone ?? "—"}</td>
-                        <td className="mono">{fmtFcfa(a.monthly_price_fcfa)}</td>
-                        <td className="mono">{fmtDateShort(a.expiry_date)}</td>
-                        <td>{statusBadge(a.status)}</td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-            </div>
+            <>
+              <div className="table-wrap hidden md:block">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Boutique</th>
+                      <th>Patron</th>
+                      <th>Téléphone</th>
+                      <th>Palier</th>
+                      <th>Échéance</th>
+                      <th>Statut</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...abonnes]
+                      .sort((a, b) => a.expiry_date - b.expiry_date)
+                      .map((a) => (
+                        <tr key={a.id}>
+                          <td className="cell-store"><strong>{a.name}</strong></td>
+                          <td>{a.owner_name || "—"}</td>
+                          <td className="mono">{a.phone ?? "—"}</td>
+                          <td className="mono">{fmtFcfa(a.monthly_price_fcfa)}</td>
+                          <td className="mono">{fmtDateShort(a.expiry_date)}</td>
+                          <td>{statusBadge(a.status)}</td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+              {/* mobile : une carte par compte. */}
+              <div className="pay-cards md:hidden">
+                {[...abonnes]
+                  .sort((a, b) => a.expiry_date - b.expiry_date)
+                  .map((a) => (
+                    <article className="pay-card" key={a.id}>
+                      <header className="pay-card-top">
+                        <strong>{a.name}</strong>
+                        {statusBadge(a.status)}
+                      </header>
+                      <div className="pay-card-store">
+                        <span>{a.owner_name || "—"}</span>
+                        <span className="mono">{a.phone ?? "—"}</span>
+                      </div>
+                      <div className="pay-card-top">
+                        <span className="mono">{fmtFcfa(a.monthly_price_fcfa)}</span>
+                        <span className="meta">échéance {fmtDateShort(a.expiry_date)}</span>
+                      </div>
+                    </article>
+                  ))}
+              </div>
+            </>
           )}
         </section>
 
@@ -437,7 +504,7 @@ export function Facturation() {
               <span>Derniers paiements enregistrés ({paymentEvents.length})</span>
             </div>
           </div>
-          <div className="table-wrap">
+          <div className="table-wrap hidden md:block">
             <table>
               <thead>
                 <tr>
@@ -472,6 +539,29 @@ export function Facturation() {
                 })}
               </tbody>
             </table>
+          </div>
+          {/* mobile : une carte par paiement — montant + statut, puis la trace. */}
+          <div className="pay-cards md:hidden">
+            {paymentEvents.slice(0, 20).map((pe) => {
+              const row = pe as PaymentEvent & { account_name?: string; store_name?: string };
+              return (
+                <article className="pay-card" key={pe.id}>
+                  <header className="pay-card-top">
+                    <strong className="mono">{fmtFcfa(pe.amount)}</strong>
+                    <span className={`badge ${pe.status === "confirmed" ? "active" : pe.status === "pending" ? "" : "expired"}`}>
+                      {pe.status}
+                    </span>
+                  </header>
+                  <div className="pay-card-store">
+                    <strong>{row.account_name ?? `#${pe.account_id}`}</strong>
+                    <span className="meta">{row.store_name}</span>
+                  </div>
+                  <p className="pay-card-sms mono">
+                    {pe.source} · {pe.reference} · {fmtDateTime(pe.received_at)}
+                  </p>
+                </article>
+              );
+            })}
           </div>
         </section>
       )}
