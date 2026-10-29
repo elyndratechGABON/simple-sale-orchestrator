@@ -1,5 +1,13 @@
 import type { ReactElement, ReactNode } from "react";
-import { TrendingUpIcon, StoreIcon, BanknoteIcon, GearIcon, LogOutIcon, SunIcon, MoonIcon } from "../icons";
+import {
+  TrendingUpIcon,
+  StoreIcon,
+  BanknoteIcon,
+  GearIcon,
+  LogOutIcon,
+  SunIcon,
+  MoonIcon,
+} from "../icons";
 
 export type Page = "tableau" | "boutiques" | "boutique" | "facturation" | "systeme";
 
@@ -35,7 +43,7 @@ export function Layout({
 
   return (
     <div className="shell">
-      <aside className="rail">
+      <aside className="rail hidden md:flex md:flex-col">
         <div className="rail-brand">
           <span className="logo">
             <StoreIcon size={17} />
@@ -79,6 +87,32 @@ export function Layout({
           </div>
         </div>
       </aside>
+
+      {/* Bottom nav mobile : le rail sémantique reste sur desktop ; sur téléphone, les
+          4 destinations vivent en barre fixe — le pouce les atteint sans scroll. */}
+      <nav
+        className="bottom-nav fixed inset-x-0 bottom-0 z-40 flex md:hidden"
+        aria-label="Navigation mobile"
+      >
+        {visible.map((n) => (
+          <button
+            key={n.id}
+            className={`bottom-nav-item relative flex flex-1 flex-col items-center justify-center gap-0.5 ${
+              page === n.id ? "active" : ""
+            }`}
+            onClick={() => onNavigate(n.id)}
+            aria-current={page === n.id ? "page" : undefined}
+          >
+            {n.icon}
+            <span className="text-[10px] leading-tight">{n.label.split(" ")[0]}</span>
+            {n.id === "facturation" && pendingCount > 0 && (
+              <span className="absolute right-3 top-1 rounded-full bg-danger px-1.5 text-[10px] font-semibold text-white">
+                {pendingCount}
+              </span>
+            )}
+          </button>
+        ))}
+      </nav>
 
       <div className="main">
         <header className="topbar">

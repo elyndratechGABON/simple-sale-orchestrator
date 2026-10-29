@@ -4,6 +4,10 @@
    Geist (interface) + JetBrains Mono (données).
    ============================================================ */
 
+/* Tailwind v4 : les utilitaires responsive (md:hidden, hidden md:block…) complètent
+   cette feuille. Preflight neutre — le design reste porté par ce CSS semantic. */
+@import "tailwindcss";
+
 :root {
   --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
@@ -1886,5 +1890,44 @@ tbody tr:hover {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---- Bottom nav mobile ---- */
+
+.bottom-nav {
+  background: var(--rail);
+  border-top: 1px solid var(--rail-border);
+  height: 60px;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.bottom-nav-item {
+  color: var(--rail-fg);
+  opacity: 0.72;
+  padding: 6px 4px;
+  transition: opacity 0.15s ease;
+}
+
+.bottom-nav-item.active {
+  color: var(--rail-fg);
+  opacity: 1;
+}
+
+.bottom-nav-item.active::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 22%;
+  right: 22%;
+  height: 2px;
+  border-radius: 0 0 2px 2px;
+  background: var(--accent);
+}
+
+/* Le contenu ne passe pas SOUS la barre fixe. */
+@media (max-width: 880px) {
+  .content {
+    padding-bottom: 84px;
   }
 }
