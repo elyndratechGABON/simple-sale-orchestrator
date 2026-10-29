@@ -721,6 +721,13 @@ router.post("/api/v1/admin/sms-payments/:id/reject", requireAdmin, async (req, r
  */
 async function deleteShopRows(shop, run) {
   await run("DELETE FROM payments WHERE shop_id = $1", [shop.id]);
+  // Demande de paiement liée à CET écran : colonne shop_id NOT NULL, FK vers shops —
+  // sans ce DELETE, la suppression d'une boutique qui avait déposé une demande
+  // échouait sur la clé étrangère (« Erreur interne » côté console).
+  await run("DELETE FROM payment_requests WHERE shop_id = $1", [shop.id]);
+  // Jobs de restauration ouverts pour cet écran (shop_id non FK, mais un job qui
+  // pointe vers une caisse disparue ne doit pas survivre à la suppression).
+  await run("DELETE FROM restore_jobs WHERE shop_id = $1", [shop.id]);
   await run("DELETE FROM admin_commands WHERE device_id = $1", [shop.device_id]);
   await run("DELETE FROM sync_payloads WHERE device_id = $1", [shop.device_id]);
   await run("DELETE FROM daily_stats WHERE device_id = $1", [shop.device_id]);
@@ -747,6 +754,9 @@ async function removeAccountRows(accountId, q) {
   await run("DELETE FROM payments WHERE account_id = $1", [accountId]);
   await run("DELETE FROM admin_commands WHERE account_id = $1", [accountId]);
   await run("DELETE FROM subscription_requests WHERE account_id = $1", [accountId]);
+  // FK NOT NULL vers accounts : les jobs de restauration du compte partent aussi,
+  // sinon la suppression du compte échouait sur la contrainte.
+  await run("DELETE FROM restore_jobs WHERE account_id = $1", [accountId]);
   await run("DELETE FROM activity_events WHERE account_id = $1", [accountId]);
   await run("DELETE FROM payment_events WHERE account_id = $1", [accountId]);
   await run("DELETE FROM device_blessings WHERE account_id = $1", [accountId]);
