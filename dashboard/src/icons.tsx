@@ -28,6 +28,24 @@ export const StoreIcon = (p: IconProps) => (
   </Svg>
 );
 
+/** Poubelle — suppression d'un écran ou d'une boutique (remplace les emojis). */
+export const TrashIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 7h16" />
+    <path d="M10 11v6M14 11v6" />
+    <path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12" />
+    <path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
+  </Svg>
+);
+
+/** Sablier — action en cours (remplace l'emoji ⏳, illisible pour les lecteurs d'écran). */
+export const HourglassIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M7 4h10M7 20h10" />
+    <path d="M8 4v3a4 4 0 0 0 4 4 4 4 0 0 1 4 4v3M16 4v3a4 4 0 0 1-4 4 4 4 0 0 0-4 4v3" />
+  </Svg>
+);
+
 export const FolderIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
