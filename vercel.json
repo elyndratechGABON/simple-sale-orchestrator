@@ -1,0 +1,14 @@
+{
+  "builds": [
+    { "src": "backend/api/index.mjs", "use": "@vercel/node", "config": { "maxDuration": 60 } },
+    { "src": "backend/api-dashboard/**", "use": "@vercel/static" }
+  ],
+  "routes": [
+    { "src": "/api/(.*)", "dest": "/backend/api/index.mjs" },
+    { "src": "/assets/(.*)", "dest": "/backend/api-dashboard/assets/$1" },
+    { "src": "/(.*)", "dest": "/backend/api-dashboard/index.html" }
+  ],
+  "crons": [
+    { "path": "/api/v1/drain", "schedule": "0 2 * * *" }
+  ]
+}
