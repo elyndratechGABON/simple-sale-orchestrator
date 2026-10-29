@@ -1,6 +1,13 @@
 {
   "builds": [
-    { "src": "api/index.mjs", "use": "@vercel/node", "config": { "maxDuration": 60 } }
+    {
+      "src": "api/index.mjs",
+      "use": "@vercel/node",
+      "config": {
+        "maxDuration": 60,
+        "includeFiles": "dashboard/dist/**"
+      }
+    }
   ],
   "routes": [
     { "src": "/api/(.*)", "dest": "/api/index.mjs" },
