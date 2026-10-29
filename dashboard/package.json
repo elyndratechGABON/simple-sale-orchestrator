@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && node -e \"const fs=require('fs');fs.rmSync('../backend/api-dashboard',{recursive:true,force:true});fs.cpSync('dist','../backend/api-dashboard',{recursive:true});console.log('dashboard -> backend/api-dashboard copie')\"",
     "preview": "vite preview"
   },
   "dependencies": {

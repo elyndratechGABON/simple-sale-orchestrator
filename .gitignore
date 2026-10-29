@@ -5,6 +5,10 @@ dist/
 # tableau de bord est un 404 alors que l'API, elle, repond. 3 fichiers, 260 Ko.
 !dashboard/dist/
 !dashboard/dist/**
+# Copie du build consommée par @vercel/static (backend/vercel.json) : la fonction
+# serverless n'upload PAS les fichiers hors de son dossier projet, d'où cette copie.
+!backend/api-dashboard/
+!backend/api-dashboard/**
 .output/
 .wrangler/
 # `.env` seul ne couvrait pas `.env.local` ni `.env.production`, et c'est

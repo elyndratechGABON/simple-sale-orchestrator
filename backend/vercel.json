@@ -1,18 +1,12 @@
 {
   "builds": [
-    {
-      "src": "api/index.mjs",
-      "use": "@vercel/node",
-      "config": {
-        "maxDuration": 60,
-        "includeFiles": "dashboard/dist/**"
-      }
-    }
+    { "src": "api/index.mjs", "use": "@vercel/node", "config": { "maxDuration": 60 } },
+    { "src": "api-dashboard/**", "use": "@vercel/static" }
   ],
   "routes": [
     { "src": "/api/(.*)", "dest": "/api/index.mjs" },
-    { "src": "/health", "dest": "/api/index.mjs" },
-    { "src": "/(.*)", "dest": "/api/index.mjs" }
+    { "src": "/assets/(.*)", "dest": "/api-dashboard/assets/$1" },
+    { "src": "/(.*)", "dest": "/api-dashboard/index.html" }
   ],
   "crons": [
     { "path": "/api/v1/drain", "schedule": "0 2 * * *" }
