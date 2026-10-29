@@ -357,7 +357,7 @@ export function Facturation() {
             {/* mobile : une carte par SMS — montant et état d'abord, SMS tronqué ensuite. */}
             <div className="pay-cards md:hidden">
               {smsEnAttente.map((p) => (
-                <article className="pay-card" key={p.id}>
+                <article className="pay-card flat-card" key={p.id}>
                   <header className="pay-card-top">
                     <strong className="mono warn">{fmtFcfa(p.amount_fcfa)}</strong>
                     <span className={`badge ${p.matched_account_id ? "delivered" : "pending"}`}>
@@ -448,7 +448,7 @@ export function Facturation() {
                 {[...abonnes]
                   .sort((a, b) => a.expiry_date - b.expiry_date)
                   .map((a) => (
-                    <article className="pay-card" key={a.id}>
+                    <article className="pay-card flat-card" key={a.id}>
                       <header className="pay-card-top">
                         <strong>{a.name}</strong>
                         {statusBadge(a.status)}
@@ -545,7 +545,7 @@ export function Facturation() {
             {paymentEvents.slice(0, 20).map((pe) => {
               const row = pe as PaymentEvent & { account_name?: string; store_name?: string };
               return (
-                <article className="pay-card" key={pe.id}>
+                <article className="pay-card flat-card" key={pe.id}>
                   <header className="pay-card-top">
                     <strong className="mono">{fmtFcfa(pe.amount)}</strong>
                     <span className={`badge ${pe.status === "confirmed" ? "active" : pe.status === "pending" ? "" : "expired"}`}>

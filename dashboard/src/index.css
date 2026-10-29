@@ -2002,7 +2002,18 @@ tbody tr:hover {
   }
 }
 
-/* ---- Cartes paiements (page Facturation, relais mobile des tableaux) ---- */
+/* ---- Cartes paiements (page Facturation, relais mobile des tableaux) ----
+   Base « flat-card » partagée avec les cartes boutique : une seule forme de carte
+   (surface + bord + arrondi + ombre + padding), les variants n'ajoutent que la
+   structure (pay-card-top / store / sms). */
+
+.flat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 16px 18px 14px;
+}
 
 .pay-cards {
   display: flex;
@@ -2011,10 +2022,7 @@ tbody tr:hover {
   margin-top: 8px;
 }
 
-.pay-card {
-  background: var(--surface-2, var(--surface));
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+.pay-card.flat-card {
   padding: 12px 14px;
   display: flex;
   flex-direction: column;
