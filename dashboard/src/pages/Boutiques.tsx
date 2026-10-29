@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import {
   fetchShopsDetail,
   fetchDeleteRequests,
@@ -25,8 +25,6 @@ import {
   PlusIcon,
   SendIcon,
   SmartphoneIcon,
-  TrashIcon,
-  HourglassIcon,
   XIcon,
 } from "../icons";
 import { Modal } from "../components/ui/Modal";
@@ -48,11 +46,11 @@ type Filtre = "all" | "trial" | "subscribed" | "suspended";
 const FILTRES: { cle: Filtre; label: string }[] = [
   { cle: "all", label: "Tous" },
   { cle: "trial", label: "En essai" },
-  { cle: "subscribed", label: "Abonn�s" },
+  { cle: "subscribed", label: "Abonnés" },
   { cle: "suspended", label: "Suspendus" },
 ];
 
-/** Une boutique � en essai � n'a jamais pay� ; � abonn� � a au moins un paiement. */
+/** Une boutique « en essai » n'a jamais payé ; « abonné » a au moins un paiement. */
 function categorie(s: ShopDetail): "trial" | "subscribed" | "suspended" {
   if (s.status === "suspended") return "suspended";
   return (s.payments ?? 0) > 0 ? "subscribed" : "trial";
@@ -66,7 +64,7 @@ export function Boutiques({ onSelect }: Props) {
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
-  // Filtres et recherche : c'est le quotidien du support (� le client de Port-Gentil �).
+  // Filtres et recherche : c'est le quotidien du support (« le client de Port-Gentil »).
   const [filtre, setFiltre] = useState<Filtre>("all");
   const [recherche, setRecherche] = useState("");
   // Les modales d'action sur une boutique.
@@ -75,14 +73,14 @@ export function Boutiques({ onSelect }: Props) {
   const [messageTexte, setMessageTexte] = useState("");
   const [accesPour, setAccesPour] = useState<ShopDetail | null>(null);
   const [deviceIdRattache, setDeviceIdRattache] = useState("");
-  // Option SUR-MESURE : +N appareils / prix libre / dur�e � au-del� des paliers.
+  // Option SUR-MESURE : +N appareils / prix libre / durée — au-delà des paliers.
   const [customPour, setCustomPour] = useState<ShopDetail | null>(null);
   const [customDevices, setCustomDevices] = useState("");
   const [customPrix, setCustomPrix] = useState("");
   const [customJours, setCustomJours] = useState("");
   // Changement de mot de passe du compte (support : le patron l'a perdu).
   const [nouveauMotDePasse, setNouveauMotDePasse] = useState("");
-  // Menu � ? � d'actions secondaires, UNE seule carte � la fois (identifiant compte).
+  // Menu « ⋯ » d'actions secondaires, UNE seule carte à la fois (identifiant compte).
   const [menuOuvertId, setMenuOuvertId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -116,15 +114,15 @@ export function Boutiques({ onSelect }: Props) {
     setDeletions(reqRes.requests);
   };
 
-  // La liste affich�e : filtres + recherche. Les compteurs restent sur le TOTAL
-  // (pas sur la liste filtr�e) : � 12 en essai � doit dire la v�rit�, m�me filtr�.
+  // La liste affichée : filtres + recherche. Les compteurs restent sur le TOTAL
+  // (pas sur la liste filtrée) : « 12 en essai » doit dire la vérité, même filtré.
   const visibles = useMemo(() => {
     const q = recherche.trim().toLowerCase();
     return shops.filter((s) => {
       if (filtre !== "all" && categorie(s) !== filtre) return false;
       if (!q) return true;
-      // La recherche porte aussi sur les EMPLOY�S : � Jean � ou � 077� � doivent
-      // retrouver la boutique � c'est le nom de la personne, pas le device_id.
+      // La recherche porte aussi sur les EMPLOYÉS : « Jean » ou « 077… » doivent
+      // retrouver la boutique — c'est le nom de la personne, pas le device_id.
       const employes = s.employes ?? [];
       return [
         s.store_name,
@@ -151,7 +149,7 @@ export function Boutiques({ onSelect }: Props) {
     setBusy(true);
     try {
       await approveDeleteRequest(req.id);
-      setNotice(`Suppression de � ${req.store_name} � approuv�e � la caisse est lib�r�e.`);
+      setNotice(`Suppression de « ${req.store_name} » approuvée — la caisse est libérée.`);
       const [shopRes, reqRes] = await Promise.all([fetchShopsDetail(), fetchDeleteRequests({ status: "pending" })]);
       setShops(shopRes.shops);
       setDeletions(reqRes.requests);
@@ -166,7 +164,7 @@ export function Boutiques({ onSelect }: Props) {
     setBusy(true);
     try {
       await rejectDeleteRequest(req.id);
-      setNotice(`Demande de suppression de � ${req.store_name} � refus�e.`);
+      setNotice(`Demande de suppression de « ${req.store_name} » refusée.`);
       const res = await fetchDeleteRequests({ status: "pending" });
       setDeletions(res.requests);
     } catch (err) {
@@ -177,11 +175,11 @@ export function Boutiques({ onSelect }: Props) {
   };
 
   const handleDeleteDevice = async (deviceId: string, storeName: string) => {
-    if (!window.confirm(`Supprimer l'�cran � ${storeName} � ? Cette action est irr�versible.`)) return;
+    if (!window.confirm(`Supprimer l'écran « ${storeName} » ? Cette action est irréversible.`)) return;
     setDeleting(deviceId);
     try {
       await deleteShop(deviceId);
-      setNotice(`�cran � ${storeName} � supprim�.`);
+      setNotice(`Écran « ${storeName} » supprimé.`);
       const shopRes = await fetchShopsDetail();
       setShops(shopRes.shops);
     } catch (err) {
@@ -193,13 +191,13 @@ export function Boutiques({ onSelect }: Props) {
 
   const handleDeleteAccount = async (accountId: number, accountName: string) => {
     if (!window.confirm(
-      `Supprimer TOUTE la boutique � ${accountName} � (compte + tous ses �crans) ?\n` +
-      `Cette action est IRR�VERSIBLE : toutes les ventes, le stock et l'historique seront perdus.`
+      `Supprimer TOUTE la boutique « ${accountName} » (compte + tous ses écrans) ?\n` +
+      `Cette action est IRRÉVERSIBLE : toutes les ventes, le stock et l'historique seront perdus.`
     )) return;
     setDeleting(`account-${accountId}`);
     try {
       await deleteAccount(accountId);
-      setNotice(`Boutique � ${accountName} � supprim�e.`);
+      setNotice(`Boutique « ${accountName} » supprimée.`);
       const shopRes = await fetchShopsDetail();
       setShops(shopRes.shops);
     } catch (err) {
@@ -209,19 +207,19 @@ export function Boutiques({ onSelect }: Props) {
     }
   };
 
-  /** Suspendre / r�activer une boutique enti�re (tous ses �crans d'un coup). */
+  /** Suspendre / réactiver une boutique entière (tous ses écrans d'un coup). */
   const handleToggleSuspend = async (s: ShopDetail) => {
     if (s.account_id == null) {
-      setError("Cette boutique n'est rattach�e � aucun compte : suspendez l'�cran depuis sa fiche.");
+      setError("Cette boutique n'est rattachée à aucun compte : suspendez l'écran depuis sa fiche.");
       return;
     }
     const nom = s.account_name || s.store_name;
     if (s.status === "suspended") {
-      if (!window.confirm(`R�activer � ${nom} � ? La caisse reprendra service.`)) return;
+      if (!window.confirm(`Réactiver « ${nom} » ? La caisse reprendra service.`)) return;
       setBusy(true);
       try {
         await activateAccount(s.account_id);
-        setNotice(`� ${nom} � r�activ�.`);
+        setNotice(`« ${nom} » réactivé.`);
         await rafraichir();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Erreur.");
@@ -231,12 +229,12 @@ export function Boutiques({ onSelect }: Props) {
       return;
     }
     if (!window.confirm(
-      `Suspendre � ${nom} � ?\nTous ses �crans se verrouillent (l'acc�s est coup�, les donn�es restent).`
+      `Suspendre « ${nom} » ?\nTous ses écrans se verrouillent (l'accès est coupé, les données restent).`
     )) return;
     setBusy(true);
     try {
       await sendAccountCommand(s.account_id, { action_type: "suspend" });
-      setNotice(`� ${nom} � suspendu.`);
+      setNotice(`« ${nom} » suspendu.`);
       await rafraichir();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur.");
@@ -245,13 +243,13 @@ export function Boutiques({ onSelect }: Props) {
     }
   };
 
-  /** Rattacher un �cran � cette boutique (recours quand l'�cran n'a pas pu rejoindre). */
+  /** Rattacher un écran à cette boutique (recours quand l'écran n'a pas pu rejoindre). */
   const handleAttach = async () => {
     if (!accesPour?.account_id || !deviceIdRattache.trim()) return;
     setBusy(true);
     try {
       await attachDeviceToAccount(accesPour.account_id, deviceIdRattache.trim());
-      setNotice(`�cran rattach� � � ${accesPour.account_name || accesPour.store_name} �.`);
+      setNotice(`Écran rattaché à « ${accesPour.account_name || accesPour.store_name} ».`);
       setDeviceIdRattache("");
       await rafraichir();
     } catch (err) {
@@ -261,18 +259,18 @@ export function Boutiques({ onSelect }: Props) {
     }
   };
 
-  /** R�voquer l'acc�s d'un �cran : il quitte la boutique (la fiche est supprim�e). */
+  /** Révoquer l'accès d'un écran : il quitte la boutique (la fiche est supprimée). */
   const handleRevokeDevice = async (deviceId: string, label: string) => {
     if (
       !window.confirm(
-        `R�voquer l'acc�s de l'�cran � ${label} � ?\nIl devra �tre rattach� � nouveau.`,
+        `Révoquer l'accès de l'écran « ${label} » ?\nIl devra être rattaché à nouveau.`,
       )
     )
       return;
     setBusy(true);
     try {
       await revokeDevice(deviceId);
-      setNotice(`Acc�s de � ${label} � r�voqu�.`);
+      setNotice(`Accès de « ${label} » révoqué.`);
       await rafraichir();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur.");
@@ -287,7 +285,7 @@ export function Boutiques({ onSelect }: Props) {
     setBusy(true);
     try {
       await setAccountPlan(s.account_id, { amount_fcfa: montant, reason: "Changement depuis la console" });
-      setNotice(`Abonnement de � ${s.account_name || s.store_name} � mis � jour.`);
+      setNotice(`Abonnement de « ${s.account_name || s.store_name} » mis à jour.`);
       setPlanPour(null);
       await rafraichir();
     } catch (err) {
@@ -297,7 +295,7 @@ export function Boutiques({ onSelect }: Props) {
     }
   };
 
-  /** Envoyer un message au patron (il le re�oit � la prochaine synchronisation). */
+  /** Envoyer un message au patron (il le reçoit à la prochaine synchronisation). */
   const handleSendMessage = async () => {
     if (!messagePour?.account_id || !messageTexte.trim()) return;
     setBusy(true);
@@ -306,7 +304,7 @@ export function Boutiques({ onSelect }: Props) {
         action_type: "broadcast_message",
         message: messageTexte.trim(),
       });
-      setNotice(`Message envoy� � � ${messagePour.account_name || messagePour.store_name} �.`);
+      setNotice(`Message envoyé à « ${messagePour.account_name || messagePour.store_name} ».`);
       setMessagePour(null);
       setMessageTexte("");
     } catch (err) {
@@ -316,16 +314,16 @@ export function Boutiques({ onSelect }: Props) {
     }
   };
 
-  /** OPTION SUR-MESURE : +N appareils et/ou un prix libre et/ou des jours � pour les
-   *  clients g�n�reux, au-del� des paliers. Contrairement au changement de palier,
-   *  les appareils s'ADDITIONNENT au quota actuel au lieu de l'�craser. */
+  /** OPTION SUR-MESURE : +N appareils et/ou un prix libre et/ou des jours — pour les
+   *  clients généreux, au-delà des paliers. Contrairement au changement de palier,
+   *  les appareils s'ADDITIONNENT au quota actuel au lieu de l'écraser. */
   const handleCustom = async () => {
     if (!customPour?.account_id) return;
     const extra = Math.max(0, Math.round(Number(customDevices) || 0));
     const prix = Math.max(0, Math.round(Number(customPrix) || 0));
     const jours = Math.max(0, Math.round(Number(customJours) || 0));
     if (extra === 0 && prix === 0 && jours === 0) {
-      setError("Renseigne au moins : +appareils, un prix ou une dur�e.");
+      setError("Renseigne au moins : +appareils, un prix ou une durée.");
       return;
     }
     setBusy(true);
@@ -337,11 +335,11 @@ export function Boutiques({ onSelect }: Props) {
         reason: "Option sur-mesure depuis la console",
       });
       const morceaux = [
-        extra ? `+${extra} �cran(s)` : null,
+        extra ? `+${extra} écran(s)` : null,
         prix ? `${prix.toLocaleString("fr-FR")} F` : null,
         jours ? `+${jours} j` : null,
-      ].filter(Boolean).join(" � ");
-      setNotice(`Option sur-mesure appliqu�e � � ${customPour.account_name || customPour.store_name} � : ${morceaux}.`);
+      ].filter(Boolean).join(" · ");
+      setNotice(`Option sur-mesure appliquée à « ${customPour.account_name || customPour.store_name} » : ${morceaux}.`);
       setCustomPour(null);
       setCustomDevices("");
       setCustomPrix("");
@@ -354,13 +352,13 @@ export function Boutiques({ onSelect }: Props) {
     }
   };
 
-  /** Changer le mot de passe du COMPTE (le patron s'est tromp� / l'a perdu). */
+  /** Changer le mot de passe du COMPTE (le patron s'est trompé / l'a perdu). */
   const handleChangePassword = async () => {
     if (!accesPour?.account_id || nouveauMotDePasse.trim().length < 6) return;
     setBusy(true);
     try {
       await setAccountPassword(accesPour.account_id, nouveauMotDePasse.trim());
-      setNotice(`Mot de passe de � ${accesPour.account_name || accesPour.store_name} � chang�.`);
+      setNotice(`Mot de passe de « ${accesPour.account_name || accesPour.store_name} » changé.`);
       setNouveauMotDePasse("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur.");
@@ -374,13 +372,13 @@ export function Boutiques({ onSelect }: Props) {
       {error && (
         <div className="alert-banner">
           {error}
-          <button className="btn btn-ghost btn-sm" onClick={() => setError("")} style={{ marginLeft: "auto" }}>?</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => setError("")} style={{ marginLeft: "auto" }}>✕</button>
         </div>
       )}
       {notice && (
         <div className="alert-banner ok">
           {notice}
-          <button className="btn btn-ghost btn-sm" onClick={() => setNotice("")} style={{ marginLeft: "auto" }}>?</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => setNotice("")} style={{ marginLeft: "auto" }}>✕</button>
         </div>
       )}
 
@@ -396,19 +394,19 @@ export function Boutiques({ onSelect }: Props) {
                   <strong>{r.store_name || "Boutique"}</strong>
                   <div className="meta">
                     {r.owner_name}
-                    {r.reason ? ` � � ${r.reason} �` : ""}
+                    {r.reason ? ` · « ${r.reason} »` : ""}
                   </div>
                 </div>
                 <div className="acc-status">
-                  <span className="badge pending">Suppression demand�e</span>
+                  <span className="badge pending">Suppression demandée</span>
                 </div>
               </header>
               <div className="acc-body">
                 <div className="history">
-                  <h3>L'employ� veut partir � {fmtDateTime(r.created_at)}</h3>
+                  <h3>L'employé veut partir — {fmtDateTime(r.created_at)}</h3>
                   <div className="history-item">
                     <span className="mono">{r.device_id}</span>
-                    <span className="muted">Appareil concern�</span>
+                    <span className="muted">Appareil concerné</span>
                   </div>
                 </div>
                 <div className="row-actions">
@@ -433,7 +431,7 @@ export function Boutiques({ onSelect }: Props) {
         </section>
       )}
 
-      {/* Filtres + recherche : le quotidien du support (� le client de Port-Gentil �). */}
+      {/* Filtres + recherche : le quotidien du support (« le client de Port-Gentil »). */}
       <div className="row-actions" style={{ marginBottom: 12, gap: 12, alignItems: "center" }}>
         <div className="segmented segmented-inline" role="tablist" aria-label="Filtrer les boutiques">
           {FILTRES.map((f) => (
@@ -450,7 +448,7 @@ export function Boutiques({ onSelect }: Props) {
         </div>
         <input
           className="input"
-          placeholder="Rechercher une boutique, un patron, un t�l�phone�"
+          placeholder="Rechercher une boutique, un patron, un téléphone…"
           value={recherche}
           onChange={(e) => setRecherche(e.target.value)}
           style={{ flex: 1, minWidth: 220, maxWidth: 420 }}
@@ -472,7 +470,7 @@ export function Boutiques({ onSelect }: Props) {
         <div className="empty">
           <InboxIcon size={28} />
           <strong>Aucune boutique</strong>
-          Les caisses apparaissent ici apr�s leur premier lancement.
+          Les caisses apparaissent ici après leur premier lancement.
         </div>
       ) : visibles.length === 0 ? (
         <div className="empty">
@@ -481,8 +479,8 @@ export function Boutiques({ onSelect }: Props) {
           Change de filtre ou efface la recherche.
         </div>
       ) : (
-        /* Une CARTE par boutique : l'enseigne, le patron, et la liste des EMPLOY�S
-           (nom + num�ro) plut�t qu'une ligne par �cran technique. */
+        /* Une CARTE par boutique : l'enseigne, le patron, et la liste des EMPLOYÉS
+           (nom + numéro) plutôt qu'une ligne par écran technique. */
         <div className="boutiques-grid">
           {visibles.map((s: ShopDetail) => {
             const employes = s.employes ?? [];
@@ -490,12 +488,12 @@ export function Boutiques({ onSelect }: Props) {
               <article className="boutique-card" key={s.account_id ?? s.id}>
                 <header className="bc-head">
                   <div className="bc-titre">
-                    <strong>{s.store_name || "�"}</strong>
-                    <span className="muted">{s.owner_name || "�"}</span>
+                    <strong>{s.store_name || "—"}</strong>
+                    <span className="muted">{s.owner_name || "—"}</span>
                   </div>
                   <div className="bc-meta">
                     <span className="bc-compte">
-                      {s.nombre_employes ?? employes.length} employ�
+                      {s.nombre_employes ?? employes.length} employé
                       {(s.nombre_employes ?? employes.length) > 1 ? "s" : ""}
                     </span>
                     {statusBadge(s.status)}
@@ -507,7 +505,7 @@ export function Boutiques({ onSelect }: Props) {
                   {s.plan_name ? <span>{s.plan_name}</span> : null}
                   {s.account_max_devices != null ? (
                     <span className="mono">
-                      {s.account_device_count}/{s.account_max_devices} �crans
+                      {s.account_device_count}/{s.account_max_devices} écrans
                     </span>
                   ) : null}
                   <span className="muted">Sync {fmtDateTime(s.last_sync_at)}</span>
@@ -518,18 +516,18 @@ export function Boutiques({ onSelect }: Props) {
                     <li key={e.device_id} className={e.confirme === false ? "non-confirme" : undefined}>
                       <OnlineDot online={e.en_ligne} />
                       <span className="bc-emp-nom">
-                        {e.nom ?? <span className="muted">�cran non d�clar�</span>}
+                        {e.nom ?? <span className="muted">Écran non déclaré</span>}
                         {e.est_proprietaire && e.nom ? (
                           <span className="badge patron">patron</span>
                         ) : null}
                         {e.confirme === false ? (
-                          <span className="badge attente" title="Appairage jamais confirm� � ne compte pas comme employ�">
-                            non confirm�
+                          <span className="badge attente" title="Appairage jamais confirmé — ne compte pas comme employé">
+                            non confirmé
                           </span>
                         ) : null}
                       </span>
                       <span className="bc-emp-tel mono">
-                        {e.telephone ?? <span className="muted">num�ro non d�clar�</span>}
+                        {e.telephone ?? <span className="muted">numéro non déclaré</span>}
                       </span>
                       <span className={`presence ${e.en_ligne ? "on" : ""}`}>
                         <span className={`dot ${e.en_ligne ? "on" : "off"}`} />
@@ -538,7 +536,7 @@ export function Boutiques({ onSelect }: Props) {
                       <button
                         className="btn btn-ghost btn-xs"
                         onClick={() => onSelect(e.device_id)}
-                        title="Voir la fiche de cet �cran"
+                        title="Voir la fiche de cet écran"
                       >
                         Fiche
                       </button>
@@ -546,15 +544,15 @@ export function Boutiques({ onSelect }: Props) {
                         className="btn btn-ghost btn-xs text-destructive hover:text-destructive"
                         onClick={() => handleDeleteDevice(e.device_id, e.nom ?? e.device_id.slice(0, 8))}
                         disabled={deleting === e.device_id || busy}
-                        title="Supprimer cet �cran"
-                        aria-label={`Supprimer l'�cran ${e.nom ?? e.device_id.slice(0, 8)}`}
+                        title="Supprimer cet écran"
+                        aria-label={`Supprimer l'écran ${e.nom ?? e.device_id.slice(0, 8)}`}
                       >
                         {deleting === e.device_id ? <HourglassIcon size={13} /> : <TrashIcon size={13} />}
                       </button>
                     </li>
                   ))}
                   {employes.length === 0 && (
-                    <li className="muted">Aucun �cran actif sur cette boutique.</li>
+                    <li className="muted">Aucun écran actif sur cette boutique.</li>
                   )}
                 </ul>
 
@@ -563,7 +561,7 @@ export function Boutiques({ onSelect }: Props) {
                     <>
                       <div className="row-actions">
                         {/* Le [+] du cahier des charges : ouvrir une place de plus pour un
-                            employ� (le prix et la dur�e restent libres). */}
+                            employé (le prix et la durée restent libres). */}
                         <button
                           className="btn btn-sm btn-primary"
                           onClick={() => {
@@ -573,23 +571,23 @@ export function Boutiques({ onSelect }: Props) {
                             setCustomJours("");
                           }}
                           disabled={busy}
-                          title="Ajouter un employ� (une place de plus)"
+                          title="Ajouter un employé (une place de plus)"
                         >
                           <PlusIcon size={13} />
-                          Ajouter un employ�
+                          Ajouter un employé
                         </button>
                         <button
                           className="btn btn-sm"
                           onClick={() => onSelect(s.device_id || employes[0]?.device_id || "")}
                           disabled={!s.device_id && employes.length === 0}
-                          title="Voir la fiche d�taill�e de cette boutique"
+                          title="Voir la fiche détaillée de cette boutique"
                         >
-                          D�tails
+                          Détails
                         </button>
                       </div>
-                      {/* Les 4 actions secondaires (abonnement, acc�s, message,
-                          suspension, suppression) vivent dans un menu � ? � � 7 boutons
-                          affich�s c�te � c�te ne se lisaient plus (audit design �3). */}
+                      {/* Les 4 actions secondaires (abonnement, accès, message,
+                          suspension, suppression) vivent dans un menu « ⋯ » — 7 boutons
+                          affichés côte à côte ne se lisaient plus (audit design §3). */}
                       <div className="bc-more">
                         {menuOuvertId === String(s.account_id) && (
                           <>
@@ -609,7 +607,7 @@ export function Boutiques({ onSelect }: Props) {
                                 disabled={busy}
                               >
                                 <BanknoteIcon size={13} />
-                                G�rer l&apos;abonnement
+                                Gérer l&apos;abonnement
                               </button>
                               <button
                                 role="menuitem"
@@ -622,7 +620,7 @@ export function Boutiques({ onSelect }: Props) {
                                 disabled={busy}
                               >
                                 <SmartphoneIcon size={13} />
-                                Acc�s
+                                Accès
                               </button>
                               <button
                                 role="menuitem"
@@ -649,7 +647,7 @@ export function Boutiques({ onSelect }: Props) {
                                 {s.status === "suspended" ? (
                                   <>
                                     <AlertIcon size={13} />
-                                    R�activer
+                                    Réactiver
                                   </>
                                 ) : (
                                   <>
@@ -683,14 +681,14 @@ export function Boutiques({ onSelect }: Props) {
                             )
                           }
                         >
-                          <span aria-hidden>?</span>
+                          <span aria-hidden>⋯</span>
                         </button>
                       </div>
                     </>
                   )}
                   {s.account_id == null && (
                     <button className="btn btn-sm" onClick={() => onSelect(s.device_id)}>
-                      D�tails de l&apos;�cran
+                      Détails de l&apos;écran
                     </button>
                   )}
                 </footer>
@@ -700,17 +698,17 @@ export function Boutiques({ onSelect }: Props) {
         </div>
       )}
 
-      {/* G�rer les acc�s : les �crans de la boutique, et le rattachement d'un �cran
-          qui n'a pas pu rejoindre de lui-m�me. */}
+      {/* Gérer les accès : les écrans de la boutique, et le rattachement d'un écran
+          qui n'a pas pu rejoindre de lui-même. */}
       <Modal
         open={accesPour !== null}
         onClose={() => setAccesPour(null)}
-        title={`Acc�s � ${accesPour?.account_name || accesPour?.store_name || ""}`}
+        title={`Accès — ${accesPour?.account_name || accesPour?.store_name || ""}`}
       >
         <p className="modal-note">
           {accesPour?.account_device_count ?? 0}/{accesPour?.account_max_devices ?? "?"} places
-          utilis�es. Pour rattacher un �cran, donnez son identifiant (visible dans la fiche de
-          l&apos;�cran, ou dans � Appareils �).
+          utilisées. Pour rattacher un écran, donnez son identifiant (visible dans la fiche de
+          l&apos;écran, ou dans « Appareils »).
         </p>
         <div className="acc-list">
           {(accesPour?.devices ?? []).map((d) => (
@@ -735,21 +733,21 @@ export function Boutiques({ onSelect }: Props) {
                   onClick={() => void handleRevokeDevice(d.device_id, d.store_name || d.device_id.slice(0, 8))}
                   disabled={busy}
                 >
-                  R�voquer l'acc�s
+                  Révoquer l'accès
                 </button>
               </div>
             </article>
           ))}
           {(accesPour?.devices ?? []).length === 0 && (
-            <div className="muted">Aucun �cran rattach�.</div>
+            <div className="muted">Aucun écran rattaché.</div>
           )}
         </div>
-        <label htmlFor="attach-device">Rattacher un �cran (identifiant de l&apos;�cran)</label>
+        <label htmlFor="attach-device">Rattacher un écran (identifiant de l&apos;écran)</label>
         <input
           id="attach-device"
           value={deviceIdRattache}
           onChange={(e) => setDeviceIdRattache(e.target.value)}
-          placeholder="ex. 3f2a�-�"
+          placeholder="ex. 3f2a…-…"
         />
         <div className="row-actions" style={{ marginTop: 12 }}>
           <button
@@ -764,9 +762,9 @@ export function Boutiques({ onSelect }: Props) {
           </button>
         </div>
         <hr style={{ margin: "16px 0", border: "none", borderTop: "1px solid var(--border, #ddd)" }} />
-        {/* Le compte a SON mot de passe (celui du patron, distinct des codes �cran) �
-            le support doit pouvoir le r�initialiser. */}
-        <label htmlFor="account-password">Changer le mot de passe du compte (min. 6 caract�res)</label>
+        {/* Le compte a SON mot de passe (celui du patron, distinct des codes écran) —
+            le support doit pouvoir le réinitialiser. */}
+        <label htmlFor="account-password">Changer le mot de passe du compte (min. 6 caractères)</label>
         <input
           id="account-password"
           type="password"
@@ -790,13 +788,13 @@ export function Boutiques({ onSelect }: Props) {
       <Modal
         open={planPour !== null}
         onClose={() => setPlanPour(null)}
-        title={`Abonnement � ${planPour?.account_name || planPour?.store_name || ""}`}
+        title={`Abonnement — ${planPour?.account_name || planPour?.store_name || ""}`}
       >
         <p className="modal-note">
-          L&apos;abonnement choisi fixe le nombre de places (�crans) et la dur�e. L&apos;abonnement en
-          cours : {planPour?.plan_name || "aucun"} � {fmtFcfa(planPour?.plan_price_fcfa ?? null)} �
+          L&apos;abonnement choisi fixe le nombre de places (écrans) et la durée. L&apos;abonnement en
+          cours : {planPour?.plan_name || "aucun"} — {fmtFcfa(planPour?.plan_price_fcfa ?? null)} —
           {" "}
-          {planPour?.account_device_count ?? 0}/{planPour?.account_max_devices ?? "?"} �crans.
+          {planPour?.account_device_count ?? 0}/{planPour?.account_max_devices ?? "?"} écrans.
         </p>
         <div className="tier-chips">
           {ABONNEMENTS.map((p) => (
@@ -808,28 +806,28 @@ export function Boutiques({ onSelect }: Props) {
             >
               <strong>{p.nom}</strong>
               <span className="muted">
-                {fmtFcfa(p.montant)} � {p.places} �crans
+                {fmtFcfa(p.montant)} · {p.places} écrans
               </span>
             </button>
           ))}
         </div>
       </Modal>
 
-      {/* Option SUR-MESURE / AJOUTER UN �CRAN : au-del� des paliers � pour les clients
-          g�n�reux. Les appareils s'additionnent au quota ACTUEL (au lieu de l'�craser),
-          le prix et la dur�e sont libres. Laisser � 0 ce qu'on ne veut pas changer. */}
+      {/* Option SUR-MESURE / AJOUTER UN ÉCRAN : au-delà des paliers — pour les clients
+          généreux. Les appareils s'additionnent au quota ACTUEL (au lieu de l'écraser),
+          le prix et la durée sont libres. Laisser à 0 ce qu'on ne veut pas changer. */}
       <Modal
         open={customPour !== null}
         onClose={() => setCustomPour(null)}
-        title={`Sur-mesure � ${customPour?.account_name || customPour?.store_name || ""}`}
+        title={`Sur-mesure — ${customPour?.account_name || customPour?.store_name || ""}`}
       >
         <p className="modal-note">
           On ADDITIONNE des appareils au quota actuel ({customPour?.account_device_count ?? 0}/
           {customPour?.account_max_devices ?? "?"} en ce moment), on encaisse le prix qu&apos;on
-          veut, on prolonge d&apos;autant de jours. Laisser � 0 ce qui ne change pas.
+          veut, on prolonge d&apos;autant de jours. Laisser à 0 ce qui ne change pas.
           <br />
-          L&apos;�cran lui-m�me rejoint la boutique avec son code de pairing (ou via � Acc�s ?
-          Rattacher �) : ici, on lui ouvre une place.
+          L&apos;écran lui-même rejoint la boutique avec son code de pairing (ou via « Accès →
+          Rattacher ») : ici, on lui ouvre une place.
         </p>
         <label htmlFor="custom-devices">+ Appareils (places en plus)</label>
         <input
@@ -841,7 +839,7 @@ export function Boutiques({ onSelect }: Props) {
           onChange={(e) => setCustomDevices(e.target.value)}
           placeholder="ex. 1"
         />
-        <label htmlFor="custom-prix">Prix encaiss� (FCFA � libre)</label>
+        <label htmlFor="custom-prix">Prix encaissé (FCFA — libre)</label>
         <input
           id="custom-prix"
           type="number"
@@ -851,7 +849,7 @@ export function Boutiques({ onSelect }: Props) {
           onChange={(e) => setCustomPrix(e.target.value)}
           placeholder="ex. 15000"
         />
-        <label htmlFor="custom-jours">Dur�e (jours de prolongation)</label>
+        <label htmlFor="custom-jours">Durée (jours de prolongation)</label>
         <input
           id="custom-jours"
           type="number"
@@ -876,20 +874,20 @@ export function Boutiques({ onSelect }: Props) {
         </div>
       </Modal>
 
-      {/* Message au patron : il le re�oit � sa prochaine synchronisation. */}
+      {/* Message au patron : il le reçoit à sa prochaine synchronisation. */}
       <Modal
         open={messagePour !== null}
         onClose={() => setMessagePour(null)}
-        title={`Message � ${messagePour?.account_name || messagePour?.store_name || ""}`}
+        title={`Message — ${messagePour?.account_name || messagePour?.store_name || ""}`}
       >
         <p className="modal-note">
-          Le message est affich� chez le patron � sa prochaine synchronisation. Utile pour une
-          consigne ponctuelle (une information, une demande de v�rification).
+          Le message est affiché chez le patron à sa prochaine synchronisation. Utile pour une
+          consigne ponctuelle (une information, une demande de vérification).
         </p>
         <textarea
           value={messageTexte}
           onChange={(e) => setMessageTexte(e.target.value)}
-          placeholder="Votre message�"
+          placeholder="Votre message…"
           rows={4}
         />
         <div className="row-actions" style={{ marginTop: 12 }}>
