@@ -735,6 +735,12 @@ async function deleteShopRows(shop, run) {
   await run("DELETE FROM payment_events WHERE shop_id = $1", [shop.id]);
   await run("DELETE FROM device_blessings WHERE device_id = $1", [shop.device_id]);
   await run("DELETE FROM device_credentials WHERE device_id = $1", [shop.device_id]);
+  // Demandes d'abonnement ANY ou de suppression déposées PAR cet écran : leurs
+  // colonnes device_id sont des TEXT sans FK (sinon la suppression échouait sur
+  // la contrainte) — mais une fiche pendouillante continuerait d'afficher des
+  // demandes d'une caisse disparue. Elles partent avec leur émetteur.
+  await run("DELETE FROM subscription_requests WHERE device_id = $1 AND account_id = $2", [shop.device_id, shop.account_id]);
+  await run("DELETE FROM delete_requests WHERE device_id = $1", [shop.device_id]);
   await run("DELETE FROM shops WHERE id = $1", [shop.id]);
 }
 
@@ -767,7 +773,12 @@ async function removeAccountRows(accountId, q) {
 }
 
 async function deleteAccountCompletely(accountId) {
-  await removeAccountRows(accountId, null);
+  // TOUT OU RIEN : la transaction garantit qu'un compte à plusieurs écrans ne
+  // left de moitié supprimé sur une contrainte FK imprévue — une extinction
+  // au milieu laisserait des écrans orphelins que la console afficherait encore.
+  await db.tx(async (client) => {
+    await removeAccountRows(accountId, client);
+  });
 }
 
 export async function deleteShop(deviceId) {
@@ -804,7 +815,14 @@ router.delete("/api/v1/admin/shops/:device_id", requireAdmin, async (req, res) =
   if (!shop) return res.status(404).json({ error: "Boutique introuvable." });
   if (session.scope === "project" && shop.app_origin !== session.project)
     return res.status(403).json({ error: "Boutique hors de ce projet." });
-  await deleteShop(device_id);
+  try {
+    await deleteShop(device_id);
+  } catch (e) {
+    console.error(`[${new Date().toISOString()}] DELETE shop ${device_id} échoué :`, e);
+    return res.status(500).json({
+      error: "Suppression de la boutique impossible : " + (e?.detail ?? e?.message ?? e),
+    });
+  }
   await logAdminAction(req, "shop", shop.id, "delete", str(req.body?.reason));
   const refs = await aliveRefs(shop.id, shop.account_id);
   await logActivity("error", "shop", "Boutique supprimée", `"${shop.store_name}" (${device_id}) par ${session.scope}`, { device_id, reason: str(req.body?.reason) ?? null }, refs.shopId, refs.accountId);
@@ -824,7 +842,14 @@ router.delete("/api/v1/admin/accounts/:account_id", requireAdmin, async (req, re
   if (!Number.isFinite(account_id)) return res.status(400).json({ error: "ID compte invalide." });
   const account = await accountById(account_id);
   if (!account) return res.status(404).json({ error: "Compte introuvable." });
-  await deleteAccountCompletely(account_id);
+  try {
+    await deleteAccountCompletely(account_id);
+  } catch (e) {
+    console.error(`[${new Date().toISOString()}] DELETE account ${account_id} échoué :`, e);
+    return res.status(500).json({
+      error: "Suppression du compte impossible : " + (e?.detail ?? e?.message ?? e),
+    });
+  }
   await logAdminAction(req, "account", String(account_id), "delete", str(req.body?.reason));
   await logActivity("error", "account", "Compte marchand supprimé", `"${account.name}" (id=${account_id})`, { reason: str(req.body?.reason) ?? null }, null, account_id);
   console.log(`[${new Date().toISOString()}] COMPTE MARCHAND SUPPRIMÉ "${account.name}" (id=${account_id})`);
