@@ -745,7 +745,12 @@ async function deleteShopRows(shop, run) {
 }
 
 async function removeAccountRows(accountId, q) {
-  const run = (sql, ...params) => (q ? q.query(sql, params) : db.run(sql, ...params));
+  // Convention PARAMS TABLEAU : `run(sql, [x])` — l'exécuteur reçoit le tableau tel
+  // quel. L'ancienne signature variadique (`(sql, ...params) => query(sql, params)
+  // `) transformait `[13]` en `[[13]]`, et Postgres voyait l'array-littéral
+  // `{"13"}` sur une colonne bigint (« invalid input syntax » — la 500 des
+  // suppressions du tableau de bord).
+  const run = (sql, params) => (q ? q.query(sql, params ?? []) : db.run(sql, ...(params ?? [])));
   // Les ÉCRANS du compte partent avec lui. Sans cela, un écran survivait à son
   // compte : il n'appartenait à plus rien (son compte était effacé) et la console
   // l'affichait quand même comme une boutique — un fantôme, avec un compteur de
@@ -753,7 +758,7 @@ async function removeAccountRows(accountId, q) {
   // ventes, stock, historique ») vaut aussi pour les écrans.
   const shops = q
     ? (await q.query("SELECT id, device_id FROM shops WHERE account_id = $1", [accountId])).rows
-    : await db.all("SELECT id, device_id FROM shops WHERE account_id = $1", [accountId]);
+    : await db.all("SELECT id, device_id FROM shops WHERE account_id = $1", accountId);
   for (const shop of shops) {
     await deleteShopRows(shop, run);
   }
@@ -786,7 +791,8 @@ export async function deleteShop(deviceId) {
   if (!shop) return null;
   const accountId = shop.account_id ?? null;
   await db.tx(async (client) => {
-    const run = (sql, ...params) => client.query(sql, params);
+    // Convention PARAMS TABLEAU (cf. removeAccountRows) : `run(sql, [x])`.
+    const run = (sql, params) => client.query(sql, params ?? []);
     await deleteShopRows(shop, run);
     if (accountId) {
       const r = await client.query("SELECT COUNT(*) AS c FROM shops WHERE account_id = $1", [accountId]);
