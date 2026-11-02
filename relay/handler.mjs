@@ -361,7 +361,11 @@ export async function handleRequest(req, res) {
         if (req.method === "POST") {
           let body;
           try {
-            body = JSON.parse(await readBody(req));
+            // Plafond 4,5 Mo (limite Vercel) : UN `catalogue.snapshot` porte les photos
+            // dataURL du catalogue partagé — un push de 20 ops dépasse le 1 Mo par
+            // défaut, la requête était coupée et le 400 s'est imposé comme « json
+            // invalide » SANS trace de la vraie cause.
+            body = JSON.parse(await readBody(req, 4_500_000));
           } catch {
             return json(res, 400, { error: "json invalide" });
           }
