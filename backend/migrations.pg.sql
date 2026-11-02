@@ -336,3 +336,34 @@ ALTER TABLE shops ADD COLUMN IF NOT EXISTS public_key TEXT;
 -- rangée par groupe devient alors introuvable au moment précis où l'on en a besoin.
 ALTER TABLE sync_ops ADD COLUMN IF NOT EXISTS account_id BIGINT;
 CREATE INDEX IF NOT EXISTS idx_sync_ops_account ON sync_ops (account_id, created_at, id);
+
+-- ── Index de performance (audit production) ─────────────────────────────────────
+-- Les colonnes portant les WHERE/ORBY récurrents des routes métier : sans eux, chaque
+-- requête de la console fait un SEQ SCAN dès que le parc grossit. Tout est
+-- `IF NOT EXISTS` : rejoué au cold start serverless sans risque.
+--
+--  - `shops.account_id` : COUNT des écrans du compte, chaînes d'écrans, deletes, attach
+--    (`SELECT … FROM shops WHERE account_id = $1` — 10 occurrences dans le code).
+--  - `shops.last_sync_at` : tri de la console (« en ligne / hors ligne » récent d'abord).
+--  - `payments (shop_id / account_id, created_at)` : historiques de paiement des
+--    vue boutique et compte (`ORDER BY created_at DESC`).
+--  - `admin_commands (account_id, created_at)` : historique des ordres du compte.
+--  - `subscription_requests (device_id, account_id)` : lecture « demande en cours de
+--    CET écran » + `DELETE … WHERE device_id AND account_id` de la suppression.
+--  - `activity_events (shop_id / account_id)` : filtres du journal + DELETE au
+--    retrait d'un écran ou d'un compte.
+--  - `payment_events (shop_id)` : historique par écran du Control Center.
+--  - `sms_payments (matched_account_id)` : le rapprochement manuel lit « les SMS déjà
+--    appariés à ce compte », et le DELETE d'un compte les détache massivement.
+--  - `sync_ops (device_id)` : lecture des ops d'UN écran du groupe, hors compte.
+CREATE INDEX IF NOT EXISTS idx_shops_account ON shops (account_id);
+CREATE INDEX IF NOT EXISTS idx_shops_last_sync ON shops (last_sync_at);
+CREATE INDEX IF NOT EXISTS idx_payments_shop_created ON payments (shop_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_payments_account_created ON payments (account_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_admin_commands_account ON admin_commands (account_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_subscription_requests_device_account ON subscription_requests (device_id, account_id);
+CREATE INDEX IF NOT EXISTS idx_activity_shop ON activity_events (shop_id);
+CREATE INDEX IF NOT EXISTS idx_activity_account ON activity_events (account_id);
+CREATE INDEX IF NOT EXISTS idx_payment_events_shop ON payment_events (shop_id);
+CREATE INDEX IF NOT EXISTS idx_sms_payments_matched ON sms_payments (matched_account_id);
+CREATE INDEX IF NOT EXISTS idx_sync_ops_device ON sync_ops (device_id);
