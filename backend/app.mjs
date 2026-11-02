@@ -17,6 +17,7 @@ import adminRouter from "./routes/admin.mjs";
 import ccRouter from "./routes/cc.mjs";
 import mirrorRouter from "./routes/mirror.mjs";
 import restoreRouter from "./routes/restore.mjs";
+import { rateLimit } from "./rate-limit.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -54,6 +55,25 @@ app.use((req, res, next) => {
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
+
+// ── Rate limiting sur les routes critiques ──────────────────────────────────────
+// 30 req/min/IP (env sur-écritable). Les middlewares sont posés AVANT les routeurs :
+// Express retient le premier layer qui matche, donc notre 429 part avant le handler
+// métier quand le plafond est atteint ; sinon le middleware rend la main (`next`),
+// et le routeur traite la requête normalement. Le login conserve EN PLUS son verrou
+// après N échecs (anti énumération de mots de passe) — les deux se complètent.
+// `/api/v1/payments/proof` y est ajouté : c'est la seule route qui déclenche des
+// écritures (demande d'abonnement) appelable par toute caisse.
+const ROUTES_LIMITEES = [
+  "/api/login",
+  "/api/v1/handshake",
+  "/api/v1/sync-data",
+  "/api/v1/requests",
+  "/api/v1/payments/proof",
+  "/api/v1/webhook/sms",
+];
+const limiteur = rateLimit();
+for (const route of ROUTES_LIMITEES) app.post(route, limiteur);
 
 // ── Routeurs ─────────────────────────────────────────────────────────────────────
 app.use(authRouter); //  POST /api/login, GET /api/config, GET /api/events
