@@ -27,6 +27,15 @@ const ABSENT_MS = Number(process.env.ABSENT_MS ?? 86_400_000);
 // (30 s) reste un filet de sécurité pratique.
 const SWEEP_INTERVAL_MS = Number(process.env.SWEEP_INTERVAL_MS ?? 30_000);
 const SWEEP_ENABLED = process.env.SWEEP_ENABLED !== "false";
+// TTL du stockage temporaire (mission 3 niveaux) : 7 jours — le relais coupe le fil
+// au-delà, quelle que soit la règle de fraîcheur, pour ne pas saturer la base. La
+// caisse rattrape de son côté (ops `sent` → `pending` → re-push quand le patron
+// revient). Env `OPS_TTL_MS` pour les tests.
+const OPS_TTL_MS = Number(process.env.OPS_TTL_MS ?? 7 * 86_400_000);
+// API PRESENCE : un appareil est « en ligne » si son dernier pull date de moins de
+// 2 min (le cycle de synchro de la caisse est d'une minute). Env `PRESENCE_MS` pour
+// les tests.
+const PRESENCE_MS = Number(process.env.PRESENCE_MS ?? 2 * 60_000);
 // Si un DASHBOARD_TOKEN est défini, /api/v1/overview exige le header x-dashboard-token.
 const DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN ?? "";
 // Secret partagé des endpoints ops (push/pull/purge/shops). Requis quand OPS_TOKEN est
@@ -81,11 +90,14 @@ async function storeOps(p, shopId, ops) {
           // `sig` et le récepteur — qui refuse tout ce qui ne se vérifie pas — les
           // laisserait toutes de côté.
           typeof op.sig === "string" ? op.sig : null,
+          // TTL de la boîte aux lettres (mission 3 niveaux) : chaque dépôt vit 7 jours
+          // au maximum — après, le balai le supprime et la caisse rebascule `pending`.
+          now + OPS_TTL_MS,
         );
-        return `($${base + 1},$${base + 2},$${base + 3},$${base + 4},$${base + 5},$${base + 6},$${base + 7},$${base + 8},'synced',$${base + 9},$${base + 10})`;
+        return `($${base + 1},$${base + 2},$${base + 3},$${base + 4},$${base + 5},$${base + 6},$${base + 7},$${base + 8},'synced',$${base + 9},$${base + 10},$${base + 11})`;
       });
       const r = await client.query(
-        `INSERT INTO sync_ops (id, shop_id, device_id, seq, type, entity_id, payload, created_at, status, received_at, sig)
+        `INSERT INTO sync_ops (id, shop_id, device_id, seq, type, entity_id, payload, created_at, status, received_at, sig, expires_at)
          VALUES ${rows.join(",")}
          ON CONFLICT (id) DO NOTHING RETURNING id`,
         params,
@@ -106,8 +118,10 @@ export async function fetchOps(p, shopId) {
   try {
     const { rows } = await client.query(
       `SELECT id, shop_id, device_id, seq, type, entity_id, payload, created_at, status, sig
-       FROM sync_ops WHERE shop_id = $1 ORDER BY created_at, id LIMIT $2`,
-      [shopId, MAX_PULL],
+       FROM sync_ops WHERE shop_id = $1
+         AND (expires_at IS NULL OR expires_at >= $2)
+       ORDER BY created_at, id LIMIT $3`,
+      [shopId, Date.now(), MAX_PULL],
     );
     return rows.map((r) => ({
       ...r,
@@ -197,6 +211,29 @@ async function sweepExpired(p) {
          )`,
       [abs],
     );
+  } finally {
+    client.release();
+  }
+}
+
+let lastTtlSweepAt = 0;
+
+/** Balai TTL (scénario 3) : supprime les ops dont le `expires_at` est passé — cf.
+ *  `OPS_TTL_MS`. VOLONTAIRESMENT indépendant de `SWEEP_ENABLED` : la règle de fraîcheur
+ *  (qui protège le patron pas encore à jour) et le TTL 7 jours (qui coupe le fil pour
+ *  ne pas saturer) sont deux missions DIFFÉRENTES — le TTL doit s'appliquer en
+ *  production comme en dev. Throttle maison, à chaque requête du relais. */
+async function sweepExpiredTtl(p) {
+  const now = Date.now();
+  if (now - lastTtlSweepAt < SWEEP_INTERVAL_MS) return;
+  lastTtlSweepAt = now;
+  const client = await p.connect();
+  try {
+    const { rowCount } = await client.query(
+      `DELETE FROM sync_ops WHERE expires_at IS NOT NULL AND expires_at < $1`,
+      [now],
+    );
+    if (rowCount > 0) console.warn(`[ttl] ${rowCount} op(s) expirée(s) supprimée(s)`);
   } finally {
     client.release();
   }
@@ -310,6 +347,7 @@ export async function handleRequest(req, res) {
   try {
     const p = ensurePool();
     await sweepExpired(p);
+    await sweepExpiredTtl(p);
 
     switch (url.pathname) {
       case "/api/v1/dashboard": {
@@ -363,6 +401,28 @@ export async function handleRequest(req, res) {
               last_pulled_at: Number(r.last_pulled_at),
             })),
           });
+        } finally {
+          client.release();
+        }
+      }
+
+      case "/api/v1/presence": {
+        // API PRESENCE (mission 3 niveaux) : QUI est en ligne à l'instant. Source
+        // première du scénario 1 vs 2 — la caisse consulte cette route AVANT de
+        // pousser, pour savoir si le patron est là (→ push direct, ACK) ou absent
+        // (→ relais temporaire, copie `sent`).
+        if (req.method !== "GET") return json(res, 405, { error: "méthode non autorisée" });
+        const shopId = url.searchParams.get("shop_id") ?? "";
+        if (!shopId) return json(res, 400, { error: "shop_id requis." });
+        const client = await p.connect();
+        try {
+          const { rows } = await client.query(
+            `SELECT device_id FROM device_pull
+             WHERE shop_id = $1 AND last_pulled_at >= $2
+             ORDER BY device_id`,
+            [shopId, Date.now() - PRESENCE_MS],
+          );
+          return json(res, 200, { online: rows.map((r) => r.device_id) });
         } finally {
           client.release();
         }

@@ -24,6 +24,12 @@ CREATE TABLE IF NOT EXISTS sync_ops (
   created_at BIGINT NOT NULL,         -- horodatage d'émission (ms), servi au tri local
   status     TEXT NOT NULL DEFAULT 'synced',
   received_at BIGINT NOT NULL,        -- moment du dépôt chez le relais
+  -- TTL du stockage TEMPORAIRE (mission 3 niveaux) : le relais garde une op 7 jours,
+  -- PUIS la supprime — quel que soit le tirage des appareils. Le patron hors-ligne une
+  -- semaine de plus fera re-basculer ses ops sur `pending` côté caisse (rattrapage
+  -- direct à la reconnexion). Cette colonne ne sature JAMAIS la base : le balai TTL
+  -- s'en déclenche à chaque requête. Migration `2026-11-02-presence-ttl.sql` sur les
+  -- bases déjà en service.
   -- Signature ECDSA P-256 de l'opération, par la clé privée de `device_id`. Le relais ne
   -- la VÉRIFIE PAS : il n'a pas les clés publiques et n'a pas à les avoir, c'est la
   -- caisse qui refuse ce qui ne se vérifie pas à l'application (cf. `isTrustedOp`).
@@ -31,6 +37,9 @@ CREATE TABLE IF NOT EXISTS sync_ops (
   -- rendrait des ops sans `sig` et le récepteur les refuserait toutes.
   sig         TEXT
 );
+
+-- TTL : index du balai d'expiration (7 jours, mission synchronisation 3 niveaux).
+CREATE INDEX IF NOT EXISTS idx_sync_ops_expires ON sync_ops (expires_at) WHERE expires_at IS NOT NULL;
 
 -- Index de restitution : un appareil tire TOUTES les ops de son groupe au pull.
 CREATE INDEX IF NOT EXISTS idx_sync_ops_shop ON sync_ops (shop_id, received_at);

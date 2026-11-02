@@ -304,7 +304,7 @@ test("le relais persiste la signature des opérations", () => {
   const handler = readFileSync(new URL("../../relay/handler.mjs", import.meta.url, import.meta.url), "utf8");
   // Sans `sig` en colonne, le pull rend des ops sans signature et le récepteur — qui
   // refuse tout ce qui ne se vérifie pas — écarte le journal entier.
-  assert.match(handler, /received_at, sig\)/, "l'INSERT doit porter la colonne sig");
+  assert.match(handler, /received_at, sig/, "l'INSERT doit porter la colonne sig");
   assert.match(handler, /typeof op\.sig === "string" \? op\.sig : null/);
   assert.match(handler, /SELECT id, shop_id, device_id, seq, type, entity_id, payload, created_at, status, sig/);
   assert.match(handler, /\.\.\.\(r\.sig \? \{ sig: r\.sig \} : \{\}\)/, "le pull doit rendre sig");

@@ -9,6 +9,7 @@
 //   GET  {origin}/api/v1/ops?shop_id=…[&device_id=…] →  { ops } (tiré + compte le pull)
 //   POST {origin}/api/v1/ops/purge →  { ids } : purge SÛRE (fraîcheur appareils)
 //   GET  {origin}/api/v1/ops/shops →  { shops } : ids opaques pour le drainer
+//   GET  {origin}/api/v1/presence  →  { online: device_id[] } : qui a tiré < 2 min
 //   GET  {origin}/api/v1/overview  →  vue d'ensemble du site relais (token optionnel)
 //
 // La caisse pointe alors VITE_OPS_URL={origin} (/api/v1/ops) et le drainer
