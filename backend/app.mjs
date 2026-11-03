@@ -47,11 +47,19 @@ app.use((req, res, next) => {
   next();
 });
 
-// CORS : les caisses s'annoncent depuis un autre domaine que celui-ci.
+// CORS : les caisses s'annoncent depuis un autre domaine que celui-ci (production
+// `https://elyndracaisse.vercel.app`, instance locale en HTTPS, IP réseau…).
+// Origine ouverte (`*`) par principe — l'authentification de MÉTIER reste les
+// routes qui ont besoin d'un compte (device_id résolu côté serveur). Les en-têtes
+// métier (`x-device-id`, `x-ops-token`) sont proclamés pour qu'un preflight de
+// requête signée ne soit jamais coupé avant d'atteindre l'app.
 app.use((req, res, next) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.set("Access-Control-Allow-Headers", "Content-Type,Authorization");
+  res.set(
+    "Access-Control-Allow-Headers",
+    "Content-Type,Authorization,X-Device-Id,X-Ops-Token,x-device-id,x-ops-token,cache-control",
+  );
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
