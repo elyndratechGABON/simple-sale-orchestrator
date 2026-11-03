@@ -75,5 +75,9 @@ CREATE TABLE IF NOT EXISTS share_tokens (
   created_at   BIGINT NOT NULL,
   expires_at   BIGINT NOT NULL,           -- TTL court (≈10 min, aligné sur le code de paire)
   used_by      TEXT,                      -- device_id ayant réclamé
-  used_at      BIGINT
+  used_at      BIGINT,
+  -- PAYLOAD LÉGER (mission QR scannable) : la copie de la boutique et la clé
+  -- publique du principal ne tiennent PLUS dans le QR — elles sont frappées ici
+  -- au mint et rendues au redeem. Le QR ne transporte que le jeton + le code.
+  meta         TEXT
 );

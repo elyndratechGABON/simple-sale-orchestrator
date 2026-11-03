@@ -468,10 +468,18 @@ export async function handleRequest(req, res) {
         const token = crypto.randomUUID();
         const ttl = Number(process.env.SHARE_TOKEN_TTL_MS ?? 10 * 60_000);
         const now = Date.now();
+        // META ULTRA-QR (mission appairage) : le code léger { token, shop_id,
+        // pair_code } suffit au scan — la copie de la boutique et la clé publique du
+        // principal vivent ICI, frappées au mint puis rendues au redeem. Un corps
+        // sans meta (appareil ancien) reste accepté : la colonne reste NULL.
+        let metaSql = null;
+        if (body?.meta && typeof body.meta === "object") {
+          metaSql = JSON.stringify(body.meta);
+        }
         await p.query(
-          `INSERT INTO share_tokens (token, shop_id, account_name, account_phone, pair_code, created_at, expires_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-          [token, shop_id, account_name, account_phone, pair_code.toUpperCase(), now, now + ttl],
+          `INSERT INTO share_tokens (token, shop_id, account_name, account_phone, pair_code, created_at, expires_at, meta)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [token, shop_id, account_name, account_phone, pair_code.toUpperCase(), now, now + ttl, metaSql],
         );
         return json(res, 200, { token, expires_at: now + ttl });
       }
@@ -498,7 +506,20 @@ export async function handleRequest(req, res) {
         );
         // marquer l'appareil vivant dans le groupe
         await recordPull(p, t.shop_id, device_id, []);
-        return json(res, 200, { shop_id: t.shop_id, account_name: t.account_name, account_phone: t.account_phone, pair_code: t.pair_code });
+        // RENDU du meta (mission QR léger) : la copie de la boutique (clé ÉPINGLÉE
+        // du principal incluse), frappée au mint, rendue au redeem. Absent sur les
+        // jetons émis par un relais ancien — les champs hérités suffisent.
+        let meta = null;
+        if (typeof t.meta === "string" && t.meta) {
+          try { meta = JSON.parse(t.meta); } catch { meta = null; }
+        }
+        return json(res, 200, {
+          shop_id: t.shop_id,
+          account_name: t.account_name,
+          account_phone: t.account_phone,
+          pair_code: t.pair_code,
+          ...(meta ? { meta } : {}),
+        });
       }
 
       case "/api/v1/overview": {
