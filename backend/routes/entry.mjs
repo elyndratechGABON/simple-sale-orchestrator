@@ -151,6 +151,24 @@ router.post("/api/v1/handshake", async (req, res) => {
 
   let shop = await byDeviceId(device_id);
 
+  // 0 bis. TOMBSTONE DE SUPPRESSION (mission éjection client) : un appareil supprimé
+  // du tableau de bord ne doit PAS se recréer une fiche au prochain handshake (la
+  // création si inconnue le ressuscitait en essai gratuit, invisible de l'admin).
+  // Le serveur refuse net (403 `shop_deleted`) — la caisse purge et repart à l'accueil.
+  if (!shop) {
+    const tombstone = await db.get("SELECT device_id FROM revoked_devices WHERE device_id = $1", device_id);
+    if (tombstone) {
+      console.log(
+        `[${new Date().toISOString()}] ÉCRAN SUPPRIMÉ refuse le handshake : ${device_id} (purge côté caisse)`,
+      );
+      return res.status(403).json({
+        error:
+          "Cette boutique a été supprimée par l'administrateur. L'appareil va être réinitialisé.",
+        code: "shop_deleted",
+      });
+    }
+  }
+
   // 1. Résolution du compte. Identifiants absents (vieux build) → le compte issu de la
   //    migration est repris tel quel. Téléphone inconnu → création avec essai et plus
   //    petit palier. Mot de passe erroné → refus net : mieux vaut une erreur claire que

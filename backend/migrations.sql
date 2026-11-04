@@ -333,3 +333,11 @@ CREATE TABLE IF NOT EXISTS device_credentials (
   created_at   INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_device_credentials_account ON device_credentials (account_id);
+
+-- TOMBSTONES de suppression (mission éjection client) : un écran supprimé du
+-- dashboard est INTERDIT de recréation — son handshake suivant reçoit 403
+-- shop_deleted et la caisse se purge seule au lieu de ressusciter un essai.
+CREATE TABLE IF NOT EXISTS revoked_devices (
+  device_id  TEXT PRIMARY KEY,
+  revoked_at BIGINT NOT NULL
+);

@@ -742,6 +742,13 @@ async function deleteShopRows(shop, run) {
   await run("DELETE FROM subscription_requests WHERE device_id = $1 AND account_id = $2", [shop.device_id, shop.account_id]);
   await run("DELETE FROM delete_requests WHERE device_id = $1", [shop.device_id]);
   await run("DELETE FROM shops WHERE id = $1", [shop.id]);
+  // TOMBSTONE (mission éjection client) : l'écran supprimé est INTERDIT de
+  // recréation — sans lui, son handshake suivant se recréait un essai gratuit
+  // fantôme, invisible de l'admin. La caisse reçoit 403 `shop_deleted` et purge.
+  await run(
+    "INSERT INTO revoked_devices (device_id, revoked_at) VALUES ($1, $2) ON CONFLICT (device_id) DO NOTHING",
+    [shop.device_id, Date.now()],
+  );
 }
 
 async function removeAccountRows(accountId, q) {
