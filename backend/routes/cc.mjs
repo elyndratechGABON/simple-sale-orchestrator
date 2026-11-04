@@ -31,6 +31,9 @@ import {
   resolveAccount,
   maintenanceState,
   setAppSetting,
+  accountsByIds,
+  devicesByAccounts,
+  accountIdsForOrigin,
 } from "../lib.mjs";
 import {
   sessionOf,
@@ -49,13 +52,13 @@ router.get("/api/v1/admin/clients", requireAdmin, async (req, res) => {
   const now = Date.now();
 
   const rows = await db.all("SELECT * FROM accounts WHERE merged_into IS NULL ORDER BY created_at DESC");
-  const accounts = [];
-  for (const a of rows) {
-    if (await accountOriginOk(a, origin)) accounts.push(a);
-  }
-  const clients = await Promise.all(
-    accounts.map(async (a) => {
-      const devices = await accountDevices(a.id);
+  // Scope projet : un seul lot origin→comptes (anti N+1, règle #8).
+  const originIds = await accountIdsForOrigin(origin);
+  const accounts = rows.filter((a) => !originIds || originIds.has(a.id));
+  const ids = accounts.map((a) => a.id);
+  const deviceLists = await devicesByAccounts(ids);
+  const clients = accounts.map((a) => {
+      const devices = deviceLists.get(a.id) ?? [];
       const shops = devices;
       // Prochain paiement = prochaine échéance
       return {
@@ -83,8 +86,7 @@ router.get("/api/v1/admin/clients", requireAdmin, async (req, res) => {
           status: d.suspended_at ? "suspended" : computeStatus(d),
         })),
       };
-    }),
-  );
+  });
 
   res.json({ clients });
 });
@@ -99,6 +101,18 @@ router.get("/api/v1/admin/clients/:id", requireAdmin, async (req, res) => {
 
   const now = Date.now();
   const devices = await accountDevices(account.id);
+
+  // Relevés par écran en UNE requête groupée (anti N+1, règle #8).
+  const payByShop = new Map(
+    devices.length === 0 ? [] : (
+      await db.all(
+        `SELECT shop_id, COUNT(*) AS c FROM payments
+         WHERE shop_id IN (${devices.map((_, i) => "$" + (i + 1)).join(",")})
+         GROUP BY shop_id`,
+        ...devices.map((d) => d.id),
+      )
+    ).map((r) => [r.shop_id, r.c]),
+  );
 
   // Historique des paiements du compte (account_id + legacy shop payments)
   const shopIds = devices.map((d) => d.id);
@@ -151,8 +165,7 @@ router.get("/api/v1/admin/clients/:id", requireAdmin, async (req, res) => {
     account.id,
   );
 
-  const shopRows = await Promise.all(
-    devices.map(async (d) => ({
+  const shopRows = devices.map((d) => ({
       id: d.id,
       device_id: d.device_id,
       store_name: d.store_name,
@@ -164,9 +177,9 @@ router.get("/api/v1/admin/clients/:id", requireAdmin, async (req, res) => {
       last_sync_at: d.last_sync_at ?? null,
       registration_date: d.registration_date,
       status: d.suspended_at ? "suspended" : computeStatus(d),
-      payments: (await db.get("SELECT COUNT(*) AS c FROM payments WHERE shop_id = $1", d.id)).c,
-    })),
-  );
+      // Une seule requête GROUP BY pour les relevés de l'écran (anti N+1).
+      payments: payByShop.get(d.id) ?? 0,
+  }));
 
   res.json({
     client: {
@@ -215,13 +228,37 @@ router.get("/api/v1/admin/shops-detail", requireAdmin, async (req, res) => {
   const origin = session.scope === "project" ? session.project : str(req.query.project) || null;
   const now = Date.now();
 
-  const shops = await Promise.all(
-    groupShopsByAccount(await listShops(origin)).map(async (group) => {
+  const groups = groupShopsByAccount(await listShops(origin));
+  // Un couplage de comptes + un lot d'écrans pour TOUS les commerces (anti N+1,
+  // règle #8) ; les redirections merged_into sont résolues dans la map en mémoire
+  // (la chaîne de fusion est bornée et revisitée hors base).
+  const accountIds = [...new Set(groups.filter((g) => g.account_id).map((g) => g.account_id))];
+  let accountMap = await accountsByIds(accountIds);
+  // Les comptes fuseurs sont disque : le SÉRIEUR courant peut pointer sur un
+  // compte absorbé. La chaîne pour chaque compte courant est suivie EN MÉMOIRE.
+  const accountOf = new Map();
+  for (const id of accountIds) {
+    let a = accountMap.get(id);
+    const visited = new Set([id]);
+    while (a?.merged_into && !visited.has(a.merged_into)) {
+      visited.add(a.merged_into);
+      if (!accountMap.has(a.merged_into)) {
+        const next = await accountById(a.merged_into);
+        if (!next) break;
+        accountMap.set(a.merged_into, next);
+      }
+      a = accountMap.get(a.merged_into);
+    }
+    accountOf.set(id, a ?? null);
+  }
+  const deviceLists = await devicesByAccounts([...new Set([...accountOf.values()].filter(Boolean).map((a) => a.id))]);
+
+  const shops = groups.map((group) => {
       const devices = group.devices;
       const premier = devices[0];
-      const account = group.account_id ? await accountById(group.account_id) : null;
-      const resolvedAccount = account ? await resolveAccount(account) : null;
-      const accountDevicesList = resolvedAccount ? await accountDevices(resolvedAccount.id) : [];
+      const account = group.account_id ? accountOf.get(group.account_id) ?? null : null;
+      const resolvedAccount = account;
+      const accountDevicesList = resolvedAccount ? deviceLists.get(resolvedAccount.id) ?? [] : [];
       // Les écrans VIVANTS du commerce (une place libérée ne compte plus).
       const actifs = group.devices.filter((d) => !d.released_at);
       // Les EMPLOYÉS : un écran = un poste. On affiche le NOM et le NUMÉRO saisis par
@@ -293,8 +330,7 @@ router.get("/api/v1/admin/shops-detail", requireAdmin, async (req, res) => {
             app_version_used: d.app_version_used ?? null,
           })),
       };
-    }),
-  );
+  });
 
   res.json({ shops });
 });
@@ -374,8 +410,20 @@ router.get("/api/v1/admin/devices", requireAdmin, async (req, res) => {
   const now = Date.now();
 
   const shops = await listShops(origin);
-  const devices = await Promise.all(
-    shops.map(async (s) => {
+  // Commandes en attente de livraison, en UNE requête pour tous les écrans
+  // (anti N+1, règle #8).
+  const pendingByDevice = new Map(
+    shops.length === 0 ? [] : (
+      await db.all(
+        `SELECT device_id, COUNT(*) AS c FROM admin_commands
+         WHERE device_id IN (${shops.map((_, i) => "$" + (i + 1)).join(",")})
+         AND delivered_at IS NULL AND superseded_at IS NULL
+         GROUP BY device_id`,
+        ...shops.map((s) => s.device_id),
+      )
+    ).map((r) => [r.device_id, r.c]),
+  );
+  const devices = shops.map((s) => {
       const status = computeStatus(s);
       return {
         device_id: s.device_id,
@@ -392,13 +440,9 @@ router.get("/api/v1/admin/devices", requireAdmin, async (req, res) => {
         registration_date: s.registration_date,
         expiry_date: s.expiry_date,
         suspended_at: s.suspended_at ?? null,
-        sync_pending: (await db.get(
-          "SELECT COUNT(*) AS c FROM admin_commands WHERE device_id = $1 AND delivered_at IS NULL AND superseded_at IS NULL",
-          s.device_id,
-        )).c,
+        sync_pending: pendingByDevice.get(s.device_id) ?? 0,
       };
-    }),
-  );
+  });
 
   const summary = {
     total: devices.length,
@@ -441,10 +485,35 @@ router.get("/api/v1/admin/sync", requireAdmin, async (req, res) => {
     (s) => s.last_sync_at && now - s.last_sync_at < ONLINE_WINDOW_MS,
   ).length;
 
-  const syncStatus = await Promise.all(
-    shops.map(async (s) => {
+  // Deux compteurs groupés pour TOUS les écrans (anti N+1, règle #8) : nombre
+  // de payloads reçus et commandes en attente.
+  const ids = shops.map((s) => s.device_id);
+  const [payloadCounts, pendingCounts] = [
+    new Map(
+      ids.length === 0 ? [] : (
+        await db.all(
+          `SELECT device_id, COUNT(*) AS c FROM sync_payloads
+           WHERE device_id IN (${ids.map((_, i) => "$" + (i + 1)).join(",")})
+           GROUP BY device_id`,
+          ...ids,
+        )
+      ).map((r) => [r.device_id, r.c]),
+    ),
+    new Map(
+      ids.length === 0 ? [] : (
+        await db.all(
+          `SELECT device_id, COUNT(*) AS c FROM admin_commands
+           WHERE device_id IN (${ids.map((_, i) => "$" + (i + 1)).join(",")})
+           AND delivered_at IS NULL AND superseded_at IS NULL
+           GROUP BY device_id`,
+          ...ids,
+        )
+      ).map((r) => [r.device_id, r.c]),
+    ),
+  ];
+  const syncStatus = shops.map((s) => {
       const lastSync = s.last_sync_at;
-      const recentSyncs = (await db.get("SELECT COUNT(*) AS c FROM sync_payloads WHERE device_id = $1", s.device_id)).c;
+      const recentSyncs = payloadCounts.get(s.device_id) ?? 0;
       const isOnline = lastSync && now - lastSync < ONLINE_WINDOW_MS;
       return {
         device_id: s.device_id,
@@ -453,11 +522,10 @@ router.get("/api/v1/admin/sync", requireAdmin, async (req, res) => {
         status: isOnline ? "online" : lastSync ? "offline" : "never",
         last_sync_at: lastSync ?? null,
         operations_count: recentSyncs,
-        pending: (await db.get("SELECT COUNT(*) AS c FROM admin_commands WHERE device_id = $1 AND delivered_at IS NULL AND superseded_at IS NULL", s.device_id)).c,
+        pending: pendingCounts.get(s.device_id) ?? 0,
         errors: 0,
       };
-    }),
-  );
+  });
 
   const pendingCommands = origin
     ? (await db.get(

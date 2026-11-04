@@ -227,6 +227,67 @@ export const accountDevices = (accountId) =>
     accountId,
   );
 
+// ── Batch dashboard (règle #8, anti N+1) ──────────────────────────────────────
+// Les routes console traitent N comptes/écrans : ne JAMAIS étendre ces helpers
+// au-delà de leur contrat (ordre et filtrage ci-dessous = ceux d'au-dessus).
+
+/** Tous les comptes d'une liste d'ids, indexés par id. */
+export async function accountsByIds(ids) {
+  if (ids.length === 0) return new Map();
+  const rows = await db.all(
+    `SELECT * FROM accounts WHERE id IN (${ids.map((_, i) => "$" + (i + 1)).join(",")})`,
+    ...ids,
+  );
+  return new Map(rows.map((a) => [a.id, a]));
+}
+
+/** Écrans ACTIFS de TOUS les comptes d'une liste, groupés par account_id, dans le
+ *  MÊME ordre que `accountDevices` (ancien d'abord — c'est lui qui décide du quota). */
+export async function devicesByAccounts(accountIds) {
+  if (accountIds.length === 0) return new Map();
+  const rows = await db.all(
+    `SELECT * FROM shops WHERE account_id IN (${accountIds.map((_, i) => "$" + (i + 1)).join(",")})
+     AND released_at IS NULL ORDER BY account_id, registration_date ASC, id ASC`,
+    ...accountIds,
+  );
+  const map = new Map();
+  for (const r of rows) {
+    const list = map.get(r.account_id);
+    if (list) list.push(r);
+    else map.set(r.account_id, [r]);
+  }
+  return map;
+}
+
+/** Quadruple du quota par dossier d'appareil actifs du compte : la place de
+ *  `device_id` dans le classement par ancienneté dépasse le palier (cf. deviceOverLimit). */
+export function isOverLimit(devices, maxDevices, deviceId) {
+  return devices.findIndex((d) => d.device_id === deviceId) >= maxDevices;
+}
+
+/** Paire { compte →dernier sync } en une requête pour un lot de comptes. */
+export async function lastSyncByAccounts(accountIds) {
+  if (accountIds.length === 0) return new Map();
+  const rows = await db.all(
+    `SELECT account_id, MAX(last_sync_at) AS last_sync
+     FROM shops WHERE account_id IN (${accountIds.map((_, i) => "$" + (i + 1)).join(",")})
+     AND released_at IS NULL AND last_sync_at IS NOT NULL
+     GROUP BY account_id`,
+    ...accountIds,
+  );
+  return new Map(rows.map((r) => [r.account_id, r.last_sync]));
+}
+
+/** Comptes présents UNIQUEMENT sur un app_origin (pour le scope projet). */
+export async function accountIdsForOrigin(origin) {
+  if (!origin) return null; // master : tout le monde passe
+  const rows = await db.all(
+    "SELECT DISTINCT account_id FROM shops WHERE app_origin = $1 AND account_id IS NOT NULL",
+    origin,
+  );
+  return new Set(rows.map((r) => r.account_id));
+}
+
 /**
  * Rend la place d'un écran qui quitte le commerce. La fiche est CONSERVÉE (historique,
  * ventes, activité) : seule la place est rendue, et l'empreinte repart dans le
@@ -950,15 +1011,17 @@ export async function computeSubscriptions(accounts) {
     grace_ending_2d: 0,
     mrr_fcfa: 0,
   };
+  // Le test « en ligne » ne voit que le DERNIER sync du compte : une seule requête
+  // groupée pour tout le lot (anti N+1, règle #8).
+  const lastSyncs = await lastSyncByAccounts(accounts.map((a) => a.id));
   for (const account of accounts) {
     const st = computeAccountStatus(account);
     if (st === "active") s.active++;
     else if (st === "grace") s.grace++;
     else if (st === "suspended") s.suspended++;
     else if (st === "expired") s.expired++;
-    const devices = await accountDevices(account.id);
-    if (devices.some((d) => d.last_sync_at && now - d.last_sync_at < ONLINE_WINDOW_MS))
-      s.online++;
+    const lastSync = lastSyncs.get(account.id) ?? 0;
+    if (lastSync && now - lastSync < ONLINE_WINDOW_MS) s.online++;
     // MRR : les comptes actifs ET en grace comptent (ils sont encore payants).
     if (st === "active" || st === "grace") {
       const left = account.expiry_date - now;

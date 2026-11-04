@@ -34,6 +34,10 @@ import {
   computeSubscriptions,
   attachAccountForLegacy,
   upsertShop,
+  accountsByIds,
+  devicesByAccounts,
+  isOverLimit,
+  accountIdsForOrigin,
 } from "../lib.mjs";
 import {
   sessionOf,
@@ -47,29 +51,35 @@ const router = Router();
 // ── Vue structurée : toutes les boutiques + appareils par boutique ─────────────
 router.get("/api/v1/admin/shops", requireAdmin, async (req, res) => {
   const shops = await listShops(req.query.origin);
-  const result = await Promise.all(
-    shops.map(async (s) => {
-      const account = s.account_id ? await accountById(s.account_id) : null;
-      return {
-        id: s.id,
-        device_id: s.device_id,
-        store_name: s.store_name,
-        owner_name: s.owner_name,
-        account_id: s.account_id,
-        account_name: account?.name ?? null,
-        phone: s.phone,
-        location: s.location,
-        cluster: s.app_origin ?? "pos",
-        expiry_date: s.expiry_date,
-        suspended_at: s.suspended_at ?? null,
-        status: account ? computeAccountStatus(account) : (s.account_id ? "unknown" : "unlinked"),
-        over_limit: account ? await deviceOverLimit(account, s.device_id) : false,
-        registered_at: s.registration_date,
-        last_sync_at: s.last_sync_at ?? null,
-        app_origin: s.app_origin ?? "pos",
-      };
-    }),
-  );
+  // Une seule requête pour l'ensemble des comptes référencés (anti N+1, règle #8) :
+  // la ligne de boutique ne porte l'account_id que pour ce qu'il n'y a pas de doute.
+  const refs = [...new Set(shops.filter((s) => s.account_id).map((s) => s.account_id))];
+  const accountMap = await accountsByIds(refs);
+  // Quota de dépassement : le classement des écrans ACTIFS par compte (une seule
+  // requête groupée) au lieu d'un deviceOverLimit par ligne (qui re-interrogeait).
+  const deviceLists = await devicesByAccounts(refs);
+  const result = shops.map((s) => {
+    const account = s.account_id ? accountMap.get(s.account_id) ?? null : null;
+    const devices = s.account_id ? deviceLists.get(s.account_id) ?? [] : [];
+    return {
+      id: s.id,
+      device_id: s.device_id,
+      store_name: s.store_name,
+      owner_name: s.owner_name,
+      account_id: s.account_id,
+      account_name: account?.name ?? null,
+      phone: s.phone,
+      location: s.location,
+      cluster: s.app_origin ?? "pos",
+      expiry_date: s.expiry_date,
+      suspended_at: s.suspended_at ?? null,
+      status: account ? computeAccountStatus(account) : (s.account_id ? "unknown" : "unlinked"),
+      over_limit: account ? isOverLimit(devices, account.max_devices, s.device_id) : false,
+      registered_at: s.registration_date,
+      last_sync_at: s.last_sync_at ?? null,
+      app_origin: s.app_origin ?? "pos",
+    };
+  });
   res.json({ shops: result, total: result.length });
 });
 
@@ -245,13 +255,23 @@ router.get("/api/v1/admin/accounts", requireAdmin, async (req, res) => {
   // Les comptes absorbés par fusion d'enseigne ne sont pas listés : leurs fiches et
   // leur historique vivent désormais sous le compte survivant.
   const rows = await db.all("SELECT * FROM accounts WHERE merged_into IS NULL ORDER BY expiry_date ASC");
-  const okRows = [];
-  for (const a of rows) {
-    if (await accountOriginOk(a, origin)) okRows.push(a);
-  }
-  const accounts = await Promise.all(
-    okRows.map(async (a) => {
-      const devices = await accountDevices(a.id);
+  // Un SEUL couplage projet→comptes au lieu d'un test par compte (anti N+1).
+  const originIds = await accountIdsForOrigin(origin);
+  const okRows = rows.filter((a) => !originIds || originIds.has(a.id));
+  // Un SEUL lot d'écrans + un SEUL comptage de paiements pour TOUTE la liste
+  // (anti N+1, règle #8) — et le dépassement de quota est calculé EN MÉMOIRE
+  // avec l'ordre d'ancienneté que `devicesByAccounts` garantit.
+  const accountIds = okRows.map((a) => a.id);
+  const deviceLists = await devicesByAccounts(accountIds);
+  const payCounts = await db.all(
+    `SELECT account_id, COUNT(*) AS c FROM payments
+     WHERE account_id IN (${accountIds.length ? accountIds.map((_, i) => "$" + (i + 1)).join(",") : "NULL"})
+     GROUP BY account_id`,
+    ...accountIds,
+  );
+  const payMap = new Map(payCounts.map((r) => [r.account_id, r.c]));
+  const accounts = okRows.map((a) => {
+      const devices = deviceLists.get(a.id) ?? [];
       return {
         id: a.id,
         name: a.name,
@@ -265,24 +285,21 @@ router.get("/api/v1/admin/accounts", requireAdmin, async (req, res) => {
         online: devices.some((d) => d.last_sync_at && now - d.last_sync_at < ONLINE_WINDOW_MS),
         // La migration a réaffecté les paiements legacy au compte : ce compteur les
         // couvre tous.
-        payments: (await db.get("SELECT COUNT(*) AS c FROM payments WHERE account_id = $1", a.id)).c,
-        devices: await Promise.all(
-          devices.map(async (d) => {
-            const over = await deviceOverLimit(a, d.device_id);
-            return {
-              device_id: d.device_id,
-              store_name: d.store_name,
-              owner_name: d.owner_name,
-              registration_date: d.registration_date,
-              last_sync_at: d.last_sync_at ?? null,
-              over_limit: over,
-              status: over ? "over_limit" : computeStatus(d),
-            };
-          }),
-        ),
+        payments: payMap.get(a.id) ?? 0,
+        devices: devices.map((d) => {
+          const over = isOverLimit(devices, a.max_devices, d.device_id);
+          return {
+            device_id: d.device_id,
+            store_name: d.store_name,
+            owner_name: d.owner_name,
+            registration_date: d.registration_date,
+            last_sync_at: d.last_sync_at ?? null,
+            over_limit: over,
+            status: over ? "over_limit" : computeStatus(d),
+          };
+        }),
       };
-    }),
-  );
+  });
   res.json({ accounts });
 });
 
