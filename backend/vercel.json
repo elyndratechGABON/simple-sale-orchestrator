@@ -3,6 +3,7 @@
     { "src": "api/index.mjs", "use": "@vercel/node", "config": { "maxDuration": 60 } },
     { "src": "api-dashboard/**", "use": "@vercel/static" }
   ],
+  "regions": ["cle1"],
   "routes": [
     { "src": "/api/(.*)", "dest": "/api/index.mjs" },
     { "src": "/assets/(.*)", "dest": "/api-dashboard/assets/$1" },
