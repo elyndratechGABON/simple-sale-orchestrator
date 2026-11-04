@@ -213,7 +213,7 @@ export async function generateKeyword(account) {
       key += KEYWORD_ALPHABET[parseInt(digest.slice(i * 2, i * 2 + 2), 16) % KEYWORD_ALPHABET.length];
     }
     const candidate = `${key.slice(0, 4)}-${key.slice(4)}`;
-    if (!(await accountByKeyword(candidate))) return candidate;
+    if (!(await db.get("SELECT 1 FROM accounts WHERE keyword = $1 LIMIT 1", candidate))) return candidate;
   }
   throw new Error("Impossible de générer un mot clé unique.");
 }
@@ -467,7 +467,8 @@ export const deviceBlessing = (deviceId, accountId, blessedBy) =>
     blessedBy,
   );
 export const deviceBlessingByDevice = (deviceId) =>
-  db.get("SELECT * FROM device_blessings WHERE device_id = $1", deviceId);
+  // La bénédiction ne sert qu'à retrouver le COMPTE : une seule colonne à charger.
+  db.get("SELECT account_id FROM device_blessings WHERE device_id = $1", deviceId);
 export const deviceBlessingsForAccount = (accountId) =>
   db.all("SELECT * FROM device_blessings WHERE account_id = $1", accountId);
 /** Crée ou renouvelle le secret par-appareil ; retourne le mot de passe généré. */
@@ -489,7 +490,9 @@ export async function upsertDeviceCredential(deviceId, accountId) {
   return secret;
 }
 export const deviceCredentialForDevice = (deviceId) =>
-  db.get("SELECT * FROM device_credentials WHERE device_id = $1", deviceId);
+  // Lecture d'EXISTENCE (upsert de secret une seule fois) : ne jamais tirer le
+  // hash du mot de passe appairé, période — le minimalisme EST la sécurité.
+  db.get("SELECT 1 FROM device_credentials WHERE device_id = $1 LIMIT 1", deviceId);
 
 /** Comptes vivants possédant au moins une fiche au nom normalisé donné. */
 export async function accountsForNameKey(key) {
