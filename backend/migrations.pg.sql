@@ -367,3 +367,11 @@ CREATE INDEX IF NOT EXISTS idx_activity_account ON activity_events (account_id);
 CREATE INDEX IF NOT EXISTS idx_payment_events_shop ON payment_events (shop_id);
 CREATE INDEX IF NOT EXISTS idx_sms_payments_matched ON sms_payments (matched_account_id);
 CREATE INDEX IF NOT EXISTS idx_sync_ops_device ON sync_ops (device_id);
+
+-- Tombstones de suppression (ejection client) : un ecran supprime du dashboard
+-- est interdit de recreation - son handshake suivant recoit 403 shop_deleted
+-- et la caisse se purge seule au lieu de ressusciter un essai gratuit.
+CREATE TABLE IF NOT EXISTS revoked_devices (
+  device_id  TEXT PRIMARY KEY,
+  revoked_at BIGINT NOT NULL
+);
